@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Room Scan Viewer – Depth Anything 3</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #080810;
+      overflow: hidden;
+      font-family: 'Courier New', monospace;
+    }
+
+    canvas { display: block; }
+
+    #overlay {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: rgba(8,8,16,0.9);
+      color: #fff;
+      z-index: 10;
+      transition: opacity 0.6s;
+    }
+    #overlay.hidden { opacity: 0; pointer-events: none; }
+
+    #title { font-size: 22px; font-weight: bold; letter-spacing: 0.05em; color: #cce4ff; }
+    #subtitle { font-size: 13px; color: #6688aa; margin-top: 6px; }
+
+    #progress-bar-wrap {
+      width: 300px; height: 3px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 2px; margin-top: 24px; overflow: hidden;
+    }
+    #progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #4af 0%, #8df 100%);
+      width: 0%;
+      transition: width 0.15s ease;
+    }
+
+    #status-text { font-size: 13px; color: #7aabdd; margin-top: 12px; min-height: 1.5em; }
+
+    #hud {
+      position: fixed; bottom: 20px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.45);
+      border: 1px solid rgba(100,160,255,0.18);
+      border-radius: 8px;
+      padding: 7px 18px;
+      color: rgba(160,200,255,0.65);
+      font-size: 12px;
+      pointer-events: none;
+      white-space: nowrap;
+      backdrop-filter: blur(4px);
+    }
+
+    #info-box {
+      position: fixed; top: 16px; right: 16px;
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(100,160,255,0.18);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: rgba(160,200,255,0.8);
+      font-size: 12px;
+      line-height: 1.9;
+      pointer-events: none;
+      display: none;
+      backdrop-filter: blur(4px);
+    }
+    #info-box b { color: #7acfff; }
+
+    #click-ring {
+      position: fixed;
+      width: 22px; height: 22px;
+      border: 2px solid #4af;
+      border-radius: 50%;
+      pointer-events: none;
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.3);
+    }
+    #click-ring.pulse {
+      animation: ringPulse 0.5s ease-out forwards;
+    }
+    @keyframes ringPulse {
+      0%   { opacity: 1;   transform: translate(-50%,-50%) scale(0.3); }
+      50%  { opacity: 0.7; transform: translate(-50%,-50%) scale(1.3); }
+      100% { opacity: 0;   transform: translate(-50%,-50%) scale(1.9); }
+    }
+  </style>
+</head>
+<body>
+
+<div id="overlay">
+  <div id="title">Room Scan Viewer</div>
+  <div id="subtitle">Depth Anything 3 – Punktwolke</div>
+  <div id="progress-bar-wrap"><div id="progress-bar"></div></div>
+  <div id="status-text">Initialisiere …</div>
+</div>
+
+<div id="hud">
+  Klick&nbsp;→&nbsp;Kamera ausrichten &nbsp;|&nbsp; Ziehen&nbsp;→&nbsp;Drehen &nbsp;|&nbsp; Scroll&nbsp;→&nbsp;Zoom &nbsp;|&nbsp; Rechtsklick&nbsp;→&nbsp;Verschieben
+</div>
+
+<div id="info-box"></div>
+<div id="click-ring"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE          from 'three';
+import { GLTFLoader }      from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls }   from 'three/addons/controls/OrbitControls.js';
+
+// ── Renderer ──────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// ── Scene / Camera ────────────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x080810);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.001, 1000);
+camera.position.set(0, 1, 3);
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping      = true;
+controls.dampingFactor      = 0.06;
+controls.panSpeed           = 0.7;
+controls.zoomSpeed          = 1.1;
+controls.rotateSpeed        = 0.6;
+controls.screenSpacePanning = true;
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ── UI refs ───────────────────────────────────────────────────────────────────
+const overlay     = document.getElementById('overlay');
+const progressBar = document.getElementById('progress-bar');
+const statusText  = document.getElementById('status-text');
+const infoBox     = document.getElementById('info-box');
+const clickRing   = document.getElementById('click-ring');
+
+// ── Load GLB ─────────────────────────────────────────────────────────────────
+const loader   = new GLTFLoader();
+const allPoints = [];
+
+loader.load(
+  'scene.glb',
+  (gltf) => {
+    statusText.textContent = 'Verarbeite Geometrie …';
+
+    const positions = [];
+    const colors    = [];
+
+    gltf.scene.updateMatrixWorld(true);
+
+    gltf.scene.traverse((node) => {
+      // Case A: already a Points object
+      if (node.isPoints) {
+        const clone = node.clone();
+        scene.add(clone);
+        allPoints.push(clone);
+        return;
+      }
+
+      // Case B: Mesh → extract vertices + colors
+      if (!node.isMesh) return;
+
+      const geo = node.geometry.clone();
+      geo.applyMatrix4(node.matrixWorld);
+
+      const posAttr = geo.attributes.position;
+      const colAttr = geo.attributes.color;
+      const mat     = node.material;
+
+      for (let i = 0; i < posAttr.count; i++) {
+        positions.push(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
+
+        if (colAttr) {
+          colors.push(colAttr.getX(i), colAttr.getY(i), colAttr.getZ(i));
+        } else {
+          const c = (Array.isArray(mat) ? mat[0] : mat)?.color ?? new THREE.Color(0x8899cc);
+          colors.push(c.r, c.g, c.b);
+        }
+      }
+      geo.dispose();
+    });
+
+    // Build unified Points object from extracted vertices
+    if (positions.length > 0) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      const hasColors = colors.length === positions.length;
+      if (hasColors) {
+        geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      }
+
+      const mat = new THREE.PointsMaterial({
+        size:            0.007,
+        sizeAttenuation: true,
+        vertexColors:    hasColors,
+        color:           hasColors ? 0xffffff : 0x88aadd,
+        transparent:     true,
+        opacity:         0.92,
+      });
+
+      const pts = new THREE.Points(geo, mat);
+      scene.add(pts);
+      allPoints.push(pts);
+    }
+
+    if (allPoints.length === 0) {
+      statusText.textContent = 'Keine Geometrie in scene.glb gefunden.';
+      statusText.style.color = '#f66';
+      return;
+    }
+
+    // Auto-fit camera
+    const box    = new THREE.Box3().setFromObject(scene);
+    const center = box.getCenter(new THREE.Vector3());
+    const size   = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+
+    controls.target.copy(center);
+    camera.position.set(
+      center.x,
+      center.y + size.y * 0.25,
+      center.z + maxDim * 1.5
+    );
+    camera.near = maxDim * 0.00005;
+    camera.far  = maxDim * 20;
+    camera.updateProjectionMatrix();
+    controls.update();
+
+    // Info box
+    const ptCount = allPoints.reduce(
+      (s, p) => s + (p.geometry?.attributes?.position?.count ?? 0), 0
+    );
+    infoBox.innerHTML =
+      `Punkte: <b>${ptCount.toLocaleString('de-DE')}</b><br>` +
+      `Breite:  <b>${size.x.toFixed(2)} m</b><br>` +
+      `Höhe:    <b>${size.y.toFixed(2)} m</b><br>` +
+      `Tiefe:   <b>${size.z.toFixed(2)} m</b>`;
+    infoBox.style.display = 'block';
+
+    overlay.classList.add('hidden');
+    setTimeout(() => overlay.remove(), 700);
+  },
+  (xhr) => {
+    if (xhr.total) {
+      const pct = Math.round((xhr.loaded / xhr.total) * 100);
+      progressBar.style.width = pct + '%';
+      statusText.textContent  = `Lade scene.glb … ${pct}%`;
+    } else {
+      const mb = (xhr.loaded / 1_048_576).toFixed(1);
+      statusText.textContent = `Lade scene.glb … ${mb} MB`;
+    }
+  },
+  (err) => {
+    statusText.textContent = `Fehler: ${err.message}`;
+    statusText.style.color = '#f66';
+    progressBar.style.background = '#f44';
+    console.error('GLB load error:', err);
+  }
+);
+
+// ── Raycaster / Click ─────────────────────────────────────────────────────────
+const raycaster = new THREE.Raycaster();
+raycaster.params.Points.threshold = 0.05;
+
+const mouse  = new THREE.Vector2();
+let dragStartX = 0, dragStartY = 0;
+
+renderer.domElement.addEventListener('mousedown', (e) => {
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+});
+
+renderer.domElement.addEventListener('click', (e) => {
+  const dx = e.clientX - dragStartX;
+  const dy = e.clientY - dragStartY;
+  if (dx * dx + dy * dy > 25) return; // was a drag
+
+  mouse.x =  (e.clientX / innerWidth)  * 2 - 1;
+  mouse.y = -(e.clientY / innerHeight) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(allPoints, false);
+  if (!hits.length) return;
+
+  spawnClickRing(e.clientX, e.clientY);
+  aimCameraAt(hits[0].point);
+});
+
+function spawnClickRing(cx, cy) {
+  clickRing.style.left = cx + 'px';
+  clickRing.style.top  = cy + 'px';
+  clickRing.classList.remove('pulse');
+  void clickRing.offsetWidth; // force reflow to restart animation
+  clickRing.classList.add('pulse');
+}
+
+// ── Smooth camera animation ──────────────────────────────────────────────────
+const anim = {
+  active:   false,
+  t:        0,
+  duration: 0.75,
+  fromCam:  new THREE.Vector3(),
+  fromTgt:  new THREE.Vector3(),
+  toCam:    new THREE.Vector3(),
+  toTgt:    new THREE.Vector3(),
+};
+
+function aimCameraAt(point) {
+  const offset   = new THREE.Vector3().subVectors(camera.position, controls.target);
+  const dist     = offset.length();
+  const pullDist = Math.min(dist, Math.max(0.4, dist * 0.65));
+
+  anim.fromCam.copy(camera.position);
+  anim.fromTgt.copy(controls.target);
+  anim.toTgt.copy(point);
+  anim.toCam.copy(point).addScaledVector(offset.normalize(), pullDist);
+
+  anim.t      = 0;
+  anim.active = true;
+}
+
+function easeInOutCubic(t) {
+  return t < 0.5
+    ? 4 * t * t * t
+    : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+
+(function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+
+  if (anim.active) {
+    anim.t = Math.min(anim.t + dt / anim.duration, 1);
+    const t = easeInOutCubic(anim.t);
+    camera.position.lerpVectors(anim.fromCam, anim.toCam, t);
+    controls.target.lerpVectors(anim.fromTgt, anim.toTgt, t);
+    if (anim.t >= 1) anim.active = false;
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>
