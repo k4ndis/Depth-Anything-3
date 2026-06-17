@@ -9,7 +9,6 @@
     body{background:#080810;overflow:hidden;font-family:'Courier New',monospace;user-select:none}
     canvas{display:block}
 
-    /* Loading */
     #overlay{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(8,8,16,.92);color:#fff;z-index:20;transition:opacity .6s}
     #overlay.hidden{opacity:0;pointer-events:none}
     #ov-title{font-size:22px;font-weight:bold;letter-spacing:.05em;color:#cce4ff}
@@ -18,99 +17,43 @@
     #ov-bar{height:100%;width:0%;background:linear-gradient(90deg,#4af,#8df);transition:width .15s ease}
     #ov-status{font-size:13px;color:#7aabdd;margin-top:12px;min-height:1.5em}
 
-    /* Buttons */
-    .btn{
-      background:rgba(0,0,0,.5);border:1px solid rgba(100,160,255,.22);border-radius:6px;
-      color:rgba(180,210,255,.8);cursor:pointer;font-family:inherit;font-size:12px;
-      padding:6px 12px;white-space:nowrap;
-      transition:background .15s,border-color .15s,color .15s;
-      backdrop-filter:blur(4px)
-    }
+    .btn{background:rgba(0,0,0,.5);border:1px solid rgba(100,160,255,.22);border-radius:6px;color:rgba(180,210,255,.8);cursor:pointer;font-family:inherit;font-size:12px;padding:6px 12px;white-space:nowrap;transition:background .15s,border-color .15s,color .15s;backdrop-filter:blur(4px)}
     .btn:hover{background:rgba(40,80,160,.4);border-color:rgba(100,160,255,.5)}
     .btn.active{background:rgba(20,80,200,.5);border-color:rgba(80,180,255,.7);color:#7cf}
 
-    /* Controls top-left */
     #controls{position:fixed;top:16px;left:16px;display:none;gap:6px}
 
-    /* Info box top-right */
-    #info-box{
-      position:fixed;top:16px;right:16px;
-      background:rgba(0,0,0,.5);border:1px solid rgba(100,160,255,.18);
-      border-radius:8px;padding:10px 14px;
-      color:rgba(160,200,255,.8);font-size:11px;line-height:1.9;
-      pointer-events:none;display:none;backdrop-filter:blur(4px)
-    }
+    #info-box{position:fixed;top:16px;right:16px;background:rgba(0,0,0,.5);border:1px solid rgba(100,160,255,.18);border-radius:8px;padding:10px 14px;color:rgba(160,200,255,.8);font-size:11px;line-height:1.9;pointer-events:none;display:none;backdrop-filter:blur(4px)}
     #info-box b{color:#7acfff}
-    #info-cam{
-      margin-top:6px;padding-top:6px;
-      border-top:1px solid rgba(100,160,255,.1);
-      color:rgba(100,255,200,.8);display:none
-    }
+    #info-cam{margin-top:6px;padding-top:6px;border-top:1px solid rgba(100,160,255,.1);color:rgba(100,255,200,.8);display:none}
+    #auto-badge{display:inline-block;background:rgba(0,200,100,.15);border:1px solid rgba(0,200,100,.3);border-radius:4px;padding:1px 6px;font-size:10px;color:#4fc;margin-left:4px}
 
-    /* Target box bottom-right */
-    #target-box{
-      position:fixed;bottom:60px;right:16px;
-      background:rgba(0,0,0,.55);border:1px solid rgba(80,255,180,.22);
-      border-radius:8px;padding:12px 14px;
-      color:rgba(140,255,200,.85);font-size:12px;line-height:2;
-      display:none;backdrop-filter:blur(4px);min-width:190px
-    }
+    #target-box{position:fixed;bottom:60px;right:16px;background:rgba(0,0,0,.55);border:1px solid rgba(80,255,180,.22);border-radius:8px;padding:12px 14px;color:rgba(140,255,200,.85);font-size:12px;line-height:2;display:none;backdrop-filter:blur(4px);min-width:190px}
     #target-box b{color:#5ff}
-    #btn-send{
-      margin-top:8px;width:100%;display:block;text-align:center;
-      background:rgba(20,120,80,.35);border-color:rgba(60,200,130,.3);
-      color:rgba(100,255,180,.9)
-    }
+    #btn-send{margin-top:8px;width:100%;display:block;text-align:center;background:rgba(20,120,80,.35);border-color:rgba(60,200,130,.3);color:rgba(100,255,180,.9)}
     #btn-send:hover:not(:disabled){background:rgba(20,160,100,.5)}
     #btn-send:disabled{opacity:.35;cursor:default;pointer-events:none}
     #manual-hint{font-size:10px;color:rgba(255,200,80,.6);margin-top:4px;display:none}
 
-    /* HUD bottom-center */
-    #hud{
-      position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
-      background:rgba(0,0,0,.45);border:1px solid rgba(100,160,255,.15);
-      border-radius:8px;padding:7px 18px;
-      color:rgba(160,200,255,.6);font-size:12px;
-      pointer-events:none;white-space:nowrap;backdrop-filter:blur(4px)
-    }
+    #hud{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.45);border:1px solid rgba(100,160,255,.15);border-radius:8px;padding:7px 18px;color:rgba(160,200,255,.6);font-size:12px;pointer-events:none;white-space:nowrap;backdrop-filter:blur(4px)}
 
-    /* Click ring */
-    #click-ring{
-      position:fixed;width:22px;height:22px;border:2px solid;
-      border-radius:50%;pointer-events:none;opacity:0;
-      transform:translate(-50%,-50%) scale(.3)
-    }
+    #click-ring{position:fixed;width:22px;height:22px;border:2px solid;border-radius:50%;pointer-events:none;opacity:0;transform:translate(-50%,-50%) scale(.3)}
     #click-ring.tgt{border-color:#4af}
     #click-ring.cam{border-color:#4fc}
     #click-ring.pulse{animation:ringPulse .5s ease-out forwards}
-    @keyframes ringPulse{
-      0%  {opacity:1;  transform:translate(-50%,-50%) scale(.3)}
-      50% {opacity:.7; transform:translate(-50%,-50%) scale(1.3)}
-      100%{opacity:0;  transform:translate(-50%,-50%) scale(1.9)}
-    }
+    @keyframes ringPulse{0%{opacity:1;transform:translate(-50%,-50%) scale(.3)}50%{opacity:.7;transform:translate(-50%,-50%) scale(1.3)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.9)}}
 
-    /* Settings panel */
-    #settings{
-      position:fixed;top:56px;left:16px;
-      background:rgba(8,10,20,.92);border:1px solid rgba(100,160,255,.22);
-      border-radius:10px;padding:16px 18px;
-      color:rgba(160,200,255,.8);font-size:12px;
-      display:none;min-width:320px;backdrop-filter:blur(8px);z-index:15
-    }
+    #settings{position:fixed;top:56px;left:16px;background:rgba(8,10,20,.92);border:1px solid rgba(100,160,255,.22);border-radius:10px;padding:16px 18px;color:rgba(160,200,255,.8);font-size:12px;display:none;min-width:320px;backdrop-filter:blur(8px);z-index:15}
     #settings h3{color:#7acfff;margin-bottom:12px;font-size:13px;letter-spacing:.03em}
     .srow{display:flex;align-items:center;gap:8px;margin-bottom:8px}
     .srow label{min-width:115px;color:rgba(130,170,210,.7);font-size:11px}
     .srow input[type=range]{flex:1;accent-color:#4af;cursor:pointer}
-    .srow input[type=text],.srow input[type=password]{
-      flex:1;background:rgba(0,0,0,.4);border:1px solid rgba(100,160,255,.2);
-      border-radius:4px;padding:4px 8px;color:#adf;
-      font-family:inherit;font-size:11px;outline:none
-    }
+    .srow input[type=text],.srow input[type=password]{flex:1;background:rgba(0,0,0,.4);border:1px solid rgba(100,160,255,.2);border-radius:4px;padding:4px 8px;color:#adf;font-family:inherit;font-size:11px;outline:none}
     .srow input:focus{border-color:rgba(100,160,255,.5)}
     .sval{min-width:36px;text-align:right;color:#7cf}
     .sdivider{border:none;border-top:1px solid rgba(100,160,255,.1);margin:10px 0}
     #btn-sb-save{width:100%;margin-top:4px;background:rgba(30,60,120,.4)}
-    .shint{font-size:10px;color:rgba(130,170,210,.5);margin-bottom:8px;padding-left:123px}
+    .shint{font-size:10px;color:rgba(130,170,210,.45);margin-bottom:8px;padding-left:123px}
   </style>
 </head>
 <body>
@@ -139,7 +82,7 @@
   <div id="manual-hint">⚠ NEPTUN muss im Manual Mode sein</div>
 </div>
 
-<div id="hud">Klick → Kamera ausrichten · 📍 Kamera setzen → NEPTUN-Pos. klicken · Scroll → Zoom</div>
+<div id="hud">Klick → Kamera ausrichten + Pan/Tilt · 📍 → NEPTUN-Pos. setzen · Scroll → Zoom</div>
 <div id="click-ring"></div>
 
 <div id="settings">
@@ -149,9 +92,9 @@
     <input type="range" id="heading-slider" min="0" max="359" value="0" step="1"/>
     <span class="sval" id="heading-val">0°</span>
   </div>
-  <div class="shint">Richtung bei Pan=90° (Uhrzeigersinn, 0° = +Z)</div>
+  <div class="shint">Richtung bei Pan=90° – Pfeil in 3D-Karte dreht mit</div>
   <hr class="sdivider"/>
-  <div style="font-size:11px;color:rgba(140,180,220,.55);margin-bottom:8px">Supabase – für „An NEPTUN senden“</div>
+  <div style="font-size:11px;color:rgba(140,180,220,.5);margin-bottom:8px">Supabase – für „An NEPTUN senden“</div>
   <div class="srow"><label>Supabase URL</label><input type="text" id="sb-url" placeholder="https://xxx.supabase.co"/></div>
   <div class="srow"><label>Service Key</label><input type="password" id="sb-key" placeholder="service_role key"/></div>
   <div class="srow"><label>Device ID</label><input type="text" id="sb-device" placeholder="UUID des Raspberry Pi"/></div>
@@ -171,9 +114,9 @@ import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // Servo limits – mirrors neptun/config.py
-const PAN_HOME  = 90, TILT_HOME = 90;
-const PAN_MIN   = 0,  PAN_MAX   = 180;
-const TILT_MIN  = 70, TILT_MAX  = 120;
+const PAN_HOME = 90, TILT_HOME = 90;
+const PAN_MIN  = 0,  PAN_MAX   = 180;
+const TILT_MIN = 70, TILT_MAX  = 120;
 
 // Renderer
 const renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -183,7 +126,6 @@ document.body.appendChild(renderer.domElement);
 
 const scene  = new THREE.Scene();
 scene.background = new THREE.Color(0x080810);
-
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.001, 1000);
 camera.position.set(0, 1, 3);
 
@@ -202,10 +144,8 @@ window.addEventListener('resize', () => {
 const ovBar       = document.getElementById('ov-bar');
 const ovStatus    = document.getElementById('ov-status');
 const overlay     = document.getElementById('overlay');
-const infoBox     = document.getElementById('info-box');
 const infoScene   = document.getElementById('info-scene');
 const infoCam     = document.getElementById('info-cam');
-const targetBox   = document.getElementById('target-box');
 const targetInfo  = document.getElementById('target-info');
 const btnSend     = document.getElementById('btn-send');
 const manualHint  = document.getElementById('manual-hint');
@@ -224,10 +164,12 @@ let headingDeg   = 0;
 let placingCam   = false;
 let lastTargetPt = null;
 let lastPanTilt  = null;
+let floorPlane   = null;   // invisible raycast plane
 
-// Settings persistence
+// Settings
 function loadSettings() {
-  headingDeg = parseFloat(localStorage.getItem('neptun_heading') ?? '0');
+  headingDeg = parseFloat(localStorage.getItem('neptun_heading') ?? 'NaN');
+  if (isNaN(headingDeg)) headingDeg = 0;
   headingSl.value = headingDeg;
   headingValEl.textContent = headingDeg + '°';
   document.getElementById('sb-url').value    = localStorage.getItem('neptun_sb_url')    ?? '';
@@ -245,14 +187,12 @@ document.getElementById('btn-sb-save').addEventListener('click', () => {
   settingsEl.style.display = 'none';
   refreshSendBtn();
 });
-
 headingSl.addEventListener('input', () => {
   headingDeg = parseInt(headingSl.value);
   headingValEl.textContent = headingDeg + '°';
   updateArrow();
   if (lastTargetPt && camWorldPos) displayPanTilt(lastTargetPt);
 });
-
 document.getElementById('btn-settings').addEventListener('click', () => {
   settingsEl.style.display = settingsEl.style.display === 'none' ? 'block' : 'none';
 });
@@ -268,24 +208,19 @@ function buildCamMarker() {
     new THREE.CylinderGeometry(0.008, 0.008, 0.12, 8),
     new THREE.MeshBasicMaterial({ color: 0x00aa88 })
   );
-  post.position.y = -0.06;
-  g.add(post);
+  post.position.y = -0.06; g.add(post);
 
-  // Arrow group rotates to show heading
-  const ag = new THREE.Group();
-  ag.name = 'ag';
+  const ag = new THREE.Group(); ag.name = 'ag';
   const shaft = new THREE.Mesh(
     new THREE.CylinderGeometry(0.005, 0.005, 0.1, 6),
     new THREE.MeshBasicMaterial({ color: 0xddcc22 })
   );
-  shaft.rotation.x = Math.PI / 2; shaft.position.z = 0.06;
-  ag.add(shaft);
+  shaft.rotation.x = Math.PI / 2; shaft.position.z = 0.06; ag.add(shaft);
   const tip = new THREE.Mesh(
     new THREE.ConeGeometry(0.02, 0.06, 8),
     new THREE.MeshBasicMaterial({ color: 0xffee44 })
   );
-  tip.rotation.x = Math.PI / 2; tip.position.z = 0.13;
-  ag.add(tip);
+  tip.rotation.x = Math.PI / 2; tip.position.z = 0.13; ag.add(tip);
   g.add(ag);
   return g;
 }
@@ -296,63 +231,60 @@ function updateArrow() {
   if (ag) ag.rotation.y = -(headingDeg * Math.PI / 180);
 }
 
-function placeCamAt(pos) {
+function placeCamAt(pos, source = 'manual') {
   if (!camMarker) { camMarker = buildCamMarker(); scene.add(camMarker); }
   camMarker.position.copy(pos);
   camWorldPos = pos.clone();
   updateArrow();
-  localStorage.setItem('neptun_cam_pos', JSON.stringify({ x: pos.x, y: pos.y, z: pos.z }));
+  if (source === 'manual') {
+    localStorage.setItem('neptun_cam_pos', JSON.stringify({ x: pos.x, y: pos.y, z: pos.z }));
+  }
+  const badge = source === 'auto'
+    ? '<span id="auto-badge">auto</span>'
+    : '';
   infoCam.innerHTML =
-    `📍 <b>${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}</b> · Richtg: <b>${headingDeg}°</b>`;
+    `📍 ${badge} <b>${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}</b> · Richtg: <b>${headingDeg}°</b>`;
   infoCam.style.display = 'block';
   if (lastTargetPt) displayPanTilt(lastTargetPt);
 }
 
-// Pan/Tilt computation
+// Pan/Tilt
 function computePanTilt(camPos, tgtPos) {
-  const rad = headingDeg * Math.PI / 180;
-  const up  = new THREE.Vector3(0, 1, 0);
-  const fwd = new THREE.Vector3(Math.sin(rad), 0, Math.cos(rad)).normalize();
-  const right = new THREE.Vector3().crossVectors(up, fwd).normalize();
-
-  const toT = new THREE.Vector3().subVectors(tgtPos, camPos);
+  const rad  = headingDeg * Math.PI / 180;
+  const up   = new THREE.Vector3(0, 1, 0);
+  const fwd  = new THREE.Vector3(Math.sin(rad), 0, Math.cos(rad)).normalize();
+  const right= new THREE.Vector3().crossVectors(up, fwd).normalize();
+  const toT  = new THREE.Vector3().subVectors(tgtPos, camPos);
   const dist = toT.length();
   if (dist < 0.001) return null;
   toT.normalize();
-
   const hz = new THREE.Vector3(toT.x, 0, toT.z);
   const hzLen = hz.length();
-  let panOffset;
-  if (hzLen < 0.001) {
-    panOffset = 0;
-  } else {
-    hz.divideScalar(hzLen);
-    panOffset = Math.atan2(hz.dot(right), hz.dot(fwd)) * 180 / Math.PI;
-  }
+  let panOfs;
+  if (hzLen < 0.001) { panOfs = 0; }
+  else { hz.divideScalar(hzLen); panOfs = Math.atan2(hz.dot(right), hz.dot(fwd)) * 180 / Math.PI; }
   const elevDeg = Math.asin(Math.max(-1, Math.min(1, toT.y))) * 180 / Math.PI;
-
-  let pan  = Math.round((PAN_HOME  - panOffset) * 10) / 10;
-  let tilt = Math.round((TILT_HOME - elevDeg)   * 10) / 10;
+  let pan  = Math.round((PAN_HOME  - panOfs)  * 10) / 10;
+  let tilt = Math.round((TILT_HOME - elevDeg) * 10) / 10;
   const ok = pan >= PAN_MIN && pan <= PAN_MAX && tilt >= TILT_MIN && tilt <= TILT_MAX;
   pan  = Math.max(PAN_MIN,  Math.min(PAN_MAX,  pan));
   tilt = Math.max(TILT_MIN, Math.min(TILT_MAX, tilt));
   return { pan, tilt, dist: Math.round(dist * 100) / 100, ok };
 }
 
-function displayPanTilt(tgtPt) {
+function displayPanTilt(pt) {
   if (!camWorldPos) return;
-  lastTargetPt = tgtPt;
-  lastPanTilt  = computePanTilt(camWorldPos, tgtPt);
+  lastTargetPt = pt;
+  lastPanTilt  = computePanTilt(camWorldPos, pt);
   if (!lastPanTilt) return;
   const { pan, tilt, dist, ok } = lastPanTilt;
   targetInfo.innerHTML =
     `Pan:  <b>${pan.toFixed(1)}°</b><br>` +
     `Tilt: <b>${tilt.toFixed(1)}°</b><br>` +
     `Dist: <b>${dist} m</b><br>` +
-    (ok
-      ? '<span style="color:#4fc">✓ Im Servo-Bereich</span>'
-      : '<span style="color:#f76">⚠ Servo-Limit überschritten</span>');
-  targetBox.style.display = 'block';
+    (ok ? '<span style="color:#4fc">✓ Im Servo-Bereich</span>'
+        : '<span style="color:#f76">⚠ Servo-Limit überschritten</span>');
+  document.getElementById('target-box').style.display = 'block';
   refreshSendBtn();
 }
 
@@ -362,29 +294,23 @@ function refreshSendBtn() {
   manualHint.style.display = hasSb ? 'block' : 'none';
 }
 
-// Send to NEPTUN via Supabase REST
+// Send via Supabase REST
 btnSend.addEventListener('click', async () => {
   if (!lastPanTilt) return;
   const url    = localStorage.getItem('neptun_sb_url');
   const key    = localStorage.getItem('neptun_sb_key');
   const device = localStorage.getItem('neptun_sb_device');
   if (!url || !key || !device) return;
-
-  btnSend.disabled = true;
-  btnSend.textContent = '…';
-
+  btnSend.disabled = true; btnSend.textContent = '…';
   try {
-    const token = crypto.randomUUID();
     const r = await fetch(`${url}/rest/v1/devices?id=eq.${encodeURIComponent(device)}`, {
       method: 'PATCH',
-      headers: {
-        'apikey': key, 'Authorization': `Bearer ${key}`,
-        'Content-Type': 'application/json', 'Prefer': 'return=minimal',
-      },
+      headers: { 'apikey': key, 'Authorization': `Bearer ${key}`,
+                 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
       body: JSON.stringify({
         manual_pan_target:  lastPanTilt.pan,
         manual_tilt_target: lastPanTilt.tilt,
-        manual_move_token:  token,
+        manual_move_token:  crypto.randomUUID(),
       }),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -410,7 +336,22 @@ loader.load(
     ovStatus.textContent = 'Verarbeite Geometrie …';
     const positions = [], colors = [];
     gltf.scene.updateMatrixWorld(true);
-    gltf.scene.traverse((node) => {
+
+    // ── Extract scan cameras ─────────────────────────────────────────────
+    const scanCams = [];
+    gltf.scene.traverse(node => {
+      if (!node.isCamera) return;
+      const pos  = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      node.getWorldPosition(pos);
+      node.getWorldQuaternion(quat);
+      // GLTF cameras look along -Z in local space
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
+      scanCams.push({ pos, fwd });
+    });
+
+    // ── Extract point cloud / meshes ─────────────────────────────────────
+    gltf.scene.traverse(node => {
       if (node.isPoints) {
         const c = node.clone(); scene.add(c); allPoints.push(c); return;
       }
@@ -444,6 +385,7 @@ loader.load(
       ovStatus.style.color = '#f66'; return;
     }
 
+    // ── Fit camera ────────────────────────────────────────────────────────
     const box  = new THREE.Box3().setFromObject(scene);
     const ctr  = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
@@ -454,14 +396,64 @@ loader.load(
     camera.updateProjectionMatrix(); orbitCtrl.update();
     homePos.cam.copy(camera.position); homePos.tgt.copy(ctr);
 
+    // ── Invisible floor plane for free camera placement ───────────────────
+    floorPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(1000, 1000),
+      new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide })
+    );
+    floorPlane.rotation.x = -Math.PI / 2;
+    floorPlane.position.y = box.min.y;
+    scene.add(floorPlane);
+
+    // ── Auto-detect NEPTUN position from scan cameras ─────────────────────
+    if (scanCams.length > 0) {
+      // Average position = physical camera mount location
+      const avgPos = new THREE.Vector3();
+      scanCams.forEach(c => avgPos.add(c.pos));
+      avgPos.divideScalar(scanCams.length);
+
+      // Auto-place if user hasn't manually set one
+      if (!localStorage.getItem('neptun_cam_pos')) {
+        // Heading from middle camera (closest to Pan=90)
+        const mid = scanCams[Math.floor(scanCams.length / 2)];
+        let h = Math.atan2(mid.fwd.x, mid.fwd.z) * 180 / Math.PI;
+        if (h < 0) h += 360;
+        headingDeg = Math.round(h);
+        headingSl.value = headingDeg;
+        headingValEl.textContent = headingDeg + '°';
+        localStorage.setItem('neptun_heading', headingDeg.toString());
+        placeCamAt(avgPos, 'auto');
+      }
+
+      // Visualize each scan camera as colored dot + direction line
+      const n = scanCams.length;
+      scanCams.forEach((c, i) => {
+        const col = new THREE.Color().setHSL(i / n, 1, 0.65);
+        const dot = new THREE.Mesh(
+          new THREE.SphereGeometry(0.018, 8, 8),
+          new THREE.MeshBasicMaterial({ color: col })
+        );
+        dot.position.copy(c.pos);
+        scene.add(dot);
+        const pts2 = [c.pos.clone(), c.pos.clone().addScaledVector(c.fwd, 0.12)];
+        scene.add(new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(pts2),
+          new THREE.LineBasicMaterial({ color: col })
+        ));
+      });
+    }
+
+    // ── Info box ───────────────────────────────────────────────────────────
     const ptCount = allPoints.reduce((s,p)=>s+(p.geometry?.attributes?.position?.count??0),0);
-    infoScene.innerHTML =
-      `Punkte: <b>${ptCount.toLocaleString('de-DE')}</b><br>` +
-      `B×H×T: <b>${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)} m</b>`;
-    infoBox.style.display = 'block';
+    let sceneHtml = `Punkte: <b>${ptCount.toLocaleString('de-DE')}</b><br>B×H×T: <b>${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)} m</b>`;
+    if (scanCams.length > 0) sceneHtml += `<br>Scan-Kameras: <b>${scanCams.length}</b> • <span style="color:#4fc">auto-detektiert</span>`;
+    document.getElementById('info-scene').innerHTML = sceneHtml;
+    document.getElementById('info-box').style.display = 'block';
     controlsEl.style.display = 'flex';
 
-    if (camWorldPos) placeCamAt(camWorldPos);
+    // Restore saved camera marker (after scene is ready)
+    if (camWorldPos && localStorage.getItem('neptun_cam_pos')) placeCamAt(camWorldPos, 'manual');
+
     overlay.classList.add('hidden');
     setTimeout(() => overlay.remove(), 700);
   },
@@ -477,21 +469,19 @@ loader.load(
 );
 
 // Reset
-document.getElementById('btn-reset').addEventListener('click', () =>
-  flyTo(homePos.tgt, homePos.cam)
-);
+document.getElementById('btn-reset').addEventListener('click', () => flyTo(homePos.tgt, homePos.cam));
 
 // Camera placement mode
 document.getElementById('btn-place-cam').addEventListener('click', () => {
   placingCam = !placingCam;
   const btn = document.getElementById('btn-place-cam');
   btn.classList.toggle('active', placingCam);
-  btn.textContent = placingCam ? '📍 Klick = NEPTUN-Pos.' : '📍 Kamera setzen';
+  btn.textContent = placingCam ? '📍 Irgendwo klicken…' : '📍 Kamera setzen';
   renderer.domElement.style.cursor = placingCam ? 'crosshair' : 'default';
 });
 
 // Raycaster
-const ray = new THREE.Raycaster();
+const ray   = new THREE.Raycaster();
 ray.params.Points.threshold = 0.05;
 const mouse = new THREE.Vector2();
 let dsx = 0, dsy = 0;
@@ -502,12 +492,19 @@ renderer.domElement.addEventListener('click', e => {
   mouse.x =  (e.clientX/innerWidth)*2-1;
   mouse.y = -(e.clientY/innerHeight)*2+1;
   ray.setFromCamera(mouse, camera);
-  const hits = ray.intersectObjects(allPoints, false);
+
+  // In placement mode: also hit floor plane so camera can be placed in empty space
+  const targets = (placingCam && floorPlane)
+    ? [...allPoints, floorPlane]
+    : allPoints;
+  const hits = ray.intersectObjects(targets, false);
   if (!hits.length) return;
+
   const pt = hits[0].point;
   ring(e.clientX, e.clientY, placingCam ? 'cam' : 'tgt');
+
   if (placingCam) {
-    placeCamAt(pt);
+    placeCamAt(pt, 'manual');
     placingCam = false;
     const btn = document.getElementById('btn-place-cam');
     btn.classList.remove('active');
@@ -526,28 +523,21 @@ function ring(cx, cy, type) {
   clickRing.classList.add('pulse', type);
 }
 
-// Smooth fly-to
+// Fly-to animation
 const anim = {
   on:false, t:0, dur:0.75,
   fc:new THREE.Vector3(), ft:new THREE.Vector3(),
   tc:new THREE.Vector3(), tt:new THREE.Vector3(),
 };
-
-function flyTo(orbitTarget, exactCamPos = null, keepDist = false) {
-  anim.fc.copy(camera.position); anim.ft.copy(orbitCtrl.target);
-  anim.tt.copy(orbitTarget);
-  if (exactCamPos) {
-    anim.tc.copy(exactCamPos);
-  } else if (keepDist) {
+function flyTo(orbitTarget, exactCamPos=null, keepDist=false) {
+  anim.fc.copy(camera.position); anim.ft.copy(orbitCtrl.target); anim.tt.copy(orbitTarget);
+  if (exactCamPos) { anim.tc.copy(exactCamPos); }
+  else if (keepDist) {
     const off = new THREE.Vector3().subVectors(camera.position, orbitCtrl.target);
-    const pull = Math.min(off.length(), Math.max(.4, off.length()*.65));
-    anim.tc.copy(orbitTarget).addScaledVector(off.normalize(), pull);
-  } else {
-    anim.tc.copy(camera.position);
-  }
-  anim.t = 0; anim.on = true;
+    anim.tc.copy(orbitTarget).addScaledVector(off.normalize(), Math.min(off.length(), Math.max(.4, off.length()*.65)));
+  } else { anim.tc.copy(camera.position); }
+  anim.t=0; anim.on=true;
 }
-
 function ease(t){ return t<.5?4*t*t*t:1-(-2*t+2)**3/2; }
 
 // Render loop
@@ -556,11 +546,11 @@ const clock = new THREE.Clock();
   requestAnimationFrame(tick);
   const dt = clock.getDelta();
   if (anim.on) {
-    anim.t = Math.min(anim.t + dt/anim.dur, 1);
+    anim.t = Math.min(anim.t+dt/anim.dur,1);
     const t = ease(anim.t);
-    camera.position.lerpVectors(anim.fc, anim.tc, t);
-    orbitCtrl.target.lerpVectors(anim.ft, anim.tt, t);
-    if (anim.t >= 1) anim.on = false;
+    camera.position.lerpVectors(anim.fc,anim.tc,t);
+    orbitCtrl.target.lerpVectors(anim.ft,anim.tt,t);
+    if (anim.t>=1) anim.on=false;
   }
   orbitCtrl.update();
   renderer.render(scene, camera);
