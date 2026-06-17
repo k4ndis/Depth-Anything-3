@@ -21,7 +21,7 @@
     .btn:hover{background:rgba(40,80,160,.4);border-color:rgba(100,160,255,.5)}
     .btn.active{background:rgba(20,80,200,.5);border-color:rgba(80,180,255,.7);color:#7cf}
 
-    #controls{position:fixed;top:16px;left:16px;display:none;gap:6px}
+    #controls{position:fixed;top:16px;left:16px;display:none;gap:6px;flex-wrap:wrap;max-width:420px}
 
     #info-box{position:fixed;top:16px;right:16px;background:rgba(0,0,0,.5);border:1px solid rgba(100,160,255,.18);border-radius:8px;padding:10px 14px;color:rgba(160,200,255,.8);font-size:11px;line-height:1.9;pointer-events:none;display:none;backdrop-filter:blur(4px)}
     #info-box b{color:#7acfff}
@@ -40,8 +40,11 @@
     #click-ring{position:fixed;width:22px;height:22px;border:2px solid;border-radius:50%;pointer-events:none;opacity:0;transform:translate(-50%,-50%) scale(.3)}
     #click-ring.tgt{border-color:#4af}
     #click-ring.cam{border-color:#4fc}
+    #click-ring.cal{border-color:#ff0}
     #click-ring.pulse{animation:ringPulse .5s ease-out forwards}
     @keyframes ringPulse{0%{opacity:1;transform:translate(-50%,-50%) scale(.3)}50%{opacity:.7;transform:translate(-50%,-50%) scale(1.3)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.9)}}
+
+    #cal-hint-bar{position:fixed;top:60px;left:50%;transform:translateX(-50%);background:rgba(20,20,0,.85);border:1px solid rgba(255,220,0,.4);border-radius:8px;padding:8px 18px;color:rgba(255,230,80,.9);font-size:12px;pointer-events:none;display:none;backdrop-filter:blur(4px);z-index:10}
 
     #settings{position:fixed;top:56px;left:16px;background:rgba(8,10,20,.92);border:1px solid rgba(100,160,255,.22);border-radius:10px;padding:16px 18px;color:rgba(160,200,255,.8);font-size:12px;display:none;min-width:320px;backdrop-filter:blur(8px);z-index:15}
     #settings h3{color:#7acfff;margin-bottom:12px;font-size:13px;letter-spacing:.03em}
@@ -68,6 +71,7 @@
 <div id="controls">
   <button class="btn" id="btn-reset">⌂ Reset</button>
   <button class="btn" id="btn-place-cam">📍 Kamera setzen</button>
+  <button class="btn" id="btn-cal-fwd" style="display:none" title="Servo auf Pan=90°/Tilt=90° stellen, dann klicken wohin die Kamera zeigt">🎯 Pan90-Ziel</button>
   <button class="btn" id="btn-settings">⚙</button>
 </div>
 
@@ -82,7 +86,8 @@
   <div id="manual-hint">⚠ NEPTUN muss im Manual Mode sein</div>
 </div>
 
-<div id="hud">Klick → Kamera ausrichten + Pan/Tilt · 📍 → NEPTUN-Pos. setzen · Scroll → Zoom</div>
+<div id="hud">Klick → Kamera ausrichten + Pan/Tilt · 📍 → Pos. setzen · 🎯 → Ausrichtung kalibrieren</div>
+<div id="cal-hint-bar">Servo auf <b>Pan=90° / Tilt=90°</b> stellen, dann in der 3D-Karte klicken, wohin die Kamera gerade zeigt</div>
 <div id="click-ring"></div>
 
 <div id="settings">
@@ -92,9 +97,9 @@
     <input type="range" id="heading-slider" min="0" max="359" value="0" step="1"/>
     <span class="sval" id="heading-val">0°</span>
   </div>
-  <div class="shint">Richtung bei Pan=90° – Pfeil in 3D-Karte dreht mit</div>
+  <div class="shint">Feinkorrektur nach 🎯-Kalibrierung · 0°=+Z, 90°=+X</div>
   <hr class="sdivider"/>
-  <div style="font-size:11px;color:rgba(140,180,220,.5);margin-bottom:8px">Supabase – für „An NEPTUN senden“</div>
+  <div style="font-size:11px;color:rgba(140,180,220,.5);margin-bottom:8px">Supabase – für „an NEPTUN senden“</div>
   <div class="srow"><label>Supabase URL</label><input type="text" id="sb-url" placeholder="https://xxx.supabase.co"/></div>
   <div class="srow"><label>Service Key</label><input type="password" id="sb-key" placeholder="service_role key"/></div>
   <div class="srow"><label>Device ID</label><input type="text" id="sb-device" placeholder="UUID des Raspberry Pi"/></div>
@@ -140,31 +145,35 @@ window.addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// DOM
-const ovBar       = document.getElementById('ov-bar');
-const ovStatus    = document.getElementById('ov-status');
-const overlay     = document.getElementById('overlay');
-const infoScene   = document.getElementById('info-scene');
-const infoCam     = document.getElementById('info-cam');
-const targetInfo  = document.getElementById('target-info');
-const btnSend     = document.getElementById('btn-send');
-const manualHint  = document.getElementById('manual-hint');
-const clickRing   = document.getElementById('click-ring');
-const controlsEl  = document.getElementById('controls');
-const settingsEl  = document.getElementById('settings');
-const headingSl   = document.getElementById('heading-slider');
-const headingValEl= document.getElementById('heading-val');
+// DOM refs
+const ovBar        = document.getElementById('ov-bar');
+const ovStatus     = document.getElementById('ov-status');
+const overlay      = document.getElementById('overlay');
+const infoScene    = document.getElementById('info-scene');
+const infoCam      = document.getElementById('info-cam');
+const targetInfo   = document.getElementById('target-info');
+const btnSend      = document.getElementById('btn-send');
+const manualHint   = document.getElementById('manual-hint');
+const clickRing    = document.getElementById('click-ring');
+const controlsEl   = document.getElementById('controls');
+const settingsEl   = document.getElementById('settings');
+const headingSl    = document.getElementById('heading-slider');
+const headingValEl = document.getElementById('heading-val');
+const btnCalFwd    = document.getElementById('btn-cal-fwd');
+const calHintBar   = document.getElementById('cal-hint-bar');
 
 // State
-const allPoints  = [];
-const homePos    = { cam: new THREE.Vector3(), tgt: new THREE.Vector3() };
-let camMarker    = null;
-let camWorldPos  = null;
-let headingDeg   = 0;
-let placingCam   = false;
-let lastTargetPt = null;
-let lastPanTilt  = null;
-let floorPlane   = null;   // invisible raycast plane
+const allPoints    = [];
+const homePos      = { cam: new THREE.Vector3(), tgt: new THREE.Vector3() };
+let camMarker      = null;
+let camWorldPos    = null;
+let headingDeg     = 0;
+let placingCam     = false;
+let calibratingFwd = false;
+let lastTargetPt   = null;
+let lastPanTilt    = null;
+let floorPlane     = null;
+let headingRayLine = null;
 
 // Settings
 function loadSettings() {
@@ -229,6 +238,26 @@ function updateArrow() {
   if (!camMarker) return;
   const ag = camMarker.getObjectByName('ag');
   if (ag) ag.rotation.y = -(headingDeg * Math.PI / 180);
+
+  // Rebuild heading ray
+  if (headingRayLine) {
+    scene.remove(headingRayLine);
+    headingRayLine.geometry.dispose();
+    headingRayLine = null;
+  }
+  if (camWorldPos) {
+    const rad = headingDeg * Math.PI / 180;
+    const dir = new THREE.Vector3(Math.sin(rad), 0, Math.cos(rad));
+    const pts = [
+      camWorldPos.clone(),
+      camWorldPos.clone().addScaledVector(dir, 4.0)
+    ];
+    headingRayLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({ color: 0xffdd00, transparent: true, opacity: 0.45 })
+    );
+    scene.add(headingRayLine);
+  }
 }
 
 function placeCamAt(pos, source = 'manual') {
@@ -239,32 +268,32 @@ function placeCamAt(pos, source = 'manual') {
   if (source === 'manual') {
     localStorage.setItem('neptun_cam_pos', JSON.stringify({ x: pos.x, y: pos.y, z: pos.z }));
   }
-  const badge = source === 'auto'
-    ? '<span id="auto-badge">auto</span>'
-    : '';
+  const badge = source === 'auto' ? '<span id="auto-badge">auto</span>' : '';
   infoCam.innerHTML =
     `📍 ${badge} <b>${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}</b> · Richtg: <b>${headingDeg}°</b>`;
   infoCam.style.display = 'block';
+  // Show calibration button
+  btnCalFwd.style.display = 'block';
   if (lastTargetPt) displayPanTilt(lastTargetPt);
 }
 
-// Pan/Tilt
+// Pan/Tilt computation
 function computePanTilt(camPos, tgtPos) {
-  const rad  = headingDeg * Math.PI / 180;
-  const up   = new THREE.Vector3(0, 1, 0);
-  const fwd  = new THREE.Vector3(Math.sin(rad), 0, Math.cos(rad)).normalize();
-  const right= new THREE.Vector3().crossVectors(up, fwd).normalize();
-  const toT  = new THREE.Vector3().subVectors(tgtPos, camPos);
-  const dist = toT.length();
+  const rad   = headingDeg * Math.PI / 180;
+  const up    = new THREE.Vector3(0, 1, 0);
+  const fwd   = new THREE.Vector3(Math.sin(rad), 0, Math.cos(rad)).normalize();
+  const right = new THREE.Vector3().crossVectors(up, fwd).normalize();
+  const toT   = new THREE.Vector3().subVectors(tgtPos, camPos);
+  const dist  = toT.length();
   if (dist < 0.001) return null;
   toT.normalize();
-  const hz = new THREE.Vector3(toT.x, 0, toT.z);
+  const hz    = new THREE.Vector3(toT.x, 0, toT.z);
   const hzLen = hz.length();
   let panOfs;
   if (hzLen < 0.001) { panOfs = 0; }
   else { hz.divideScalar(hzLen); panOfs = Math.atan2(hz.dot(right), hz.dot(fwd)) * 180 / Math.PI; }
   const elevDeg = Math.asin(Math.max(-1, Math.min(1, toT.y))) * 180 / Math.PI;
-  let pan  = Math.round((PAN_HOME  - panOfs)  * 10) / 10;
+  let pan  = Math.round((PAN_HOME - panOfs)  * 10) / 10;
   let tilt = Math.round((TILT_HOME - elevDeg) * 10) / 10;
   const ok = pan >= PAN_MIN && pan <= PAN_MAX && tilt >= TILT_MIN && tilt <= TILT_MAX;
   pan  = Math.max(PAN_MIN,  Math.min(PAN_MAX,  pan));
@@ -337,20 +366,42 @@ loader.load(
     const positions = [], colors = [];
     gltf.scene.updateMatrixWorld(true);
 
-    // ── Extract scan cameras ─────────────────────────────────────────────
+    // ── Detect scan cameras ──────────────────────────────────────────────────────────
     const scanCams = [];
+
+    // Method 1: Three.js native camera nodes (node.isCamera)
     gltf.scene.traverse(node => {
       if (!node.isCamera) return;
-      const pos  = new THREE.Vector3();
-      const quat = new THREE.Quaternion();
-      node.getWorldPosition(pos);
-      node.getWorldQuaternion(quat);
-      // GLTF cameras look along -Z in local space
+      const pos = new THREE.Vector3(), quat = new THREE.Quaternion();
+      node.getWorldPosition(pos); node.getWorldQuaternion(quat);
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
       scanCams.push({ pos, fwd });
     });
 
-    // ── Extract point cloud / meshes ─────────────────────────────────────
+    // Method 2: Raw GLTF JSON → node index → Three.js association
+    // (DA3 frustums may be meshes; GLTF camera references still exist in JSON)
+    if (scanCams.length === 0 && (gltf.parser.json.cameras?.length ?? 0) > 0) {
+      const json = gltf.parser.json;
+      // Build lookup: GLTF node index → Three.js Object3D
+      const threeByNodeIdx = new Map();
+      gltf.scene.traverse(obj => {
+        const a = gltf.parser.associations?.get(obj);
+        if (a?.nodes !== undefined) threeByNodeIdx.set(a.nodes, obj);
+      });
+      (json.nodes || []).forEach((rn, ni) => {
+        if (rn.camera === undefined) return;
+        const obj = threeByNodeIdx.get(ni);
+        if (!obj) return;
+        const pos = new THREE.Vector3(), quat = new THREE.Quaternion();
+        obj.getWorldPosition(pos); obj.getWorldQuaternion(quat);
+        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
+        scanCams.push({ pos, fwd });
+      });
+    }
+
+    console.log(`[DA3] ${scanCams.length} scan cameras detected (GLTF cameras: ${gltf.parser.json.cameras?.length ?? 0})`);
+
+    // ── Extract point cloud / meshes ────────────────────────────────────────────────────────
     gltf.scene.traverse(node => {
       if (node.isPoints) {
         const c = node.clone(); scene.add(c); allPoints.push(c); return;
@@ -385,7 +436,7 @@ loader.load(
       ovStatus.style.color = '#f66'; return;
     }
 
-    // ── Fit camera ────────────────────────────────────────────────────────
+    // ── Fit camera ─────────────────────────────────────────────────────────────────────────
     const box  = new THREE.Box3().setFromObject(scene);
     const ctr  = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
@@ -396,7 +447,7 @@ loader.load(
     camera.updateProjectionMatrix(); orbitCtrl.update();
     homePos.cam.copy(camera.position); homePos.tgt.copy(ctr);
 
-    // ── Invisible floor plane for free camera placement ───────────────────
+    // ── Invisible floor plane for free-space camera placement ────────────────────────
     floorPlane = new THREE.Mesh(
       new THREE.PlaneGeometry(1000, 1000),
       new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide })
@@ -405,16 +456,13 @@ loader.load(
     floorPlane.position.y = box.min.y;
     scene.add(floorPlane);
 
-    // ── Auto-detect NEPTUN position from scan cameras ─────────────────────
+    // ── Auto-place NEPTUN marker from scan cameras ────────────────────────────────────
     if (scanCams.length > 0) {
-      // Average position = physical camera mount location
       const avgPos = new THREE.Vector3();
       scanCams.forEach(c => avgPos.add(c.pos));
       avgPos.divideScalar(scanCams.length);
 
-      // Auto-place if user hasn't manually set one
       if (!localStorage.getItem('neptun_cam_pos')) {
-        // Heading from middle camera (closest to Pan=90)
         const mid = scanCams[Math.floor(scanCams.length / 2)];
         let h = Math.atan2(mid.fwd.x, mid.fwd.z) * 180 / Math.PI;
         if (h < 0) h += 360;
@@ -425,7 +473,7 @@ loader.load(
         placeCamAt(avgPos, 'auto');
       }
 
-      // Visualize each scan camera as colored dot + direction line
+      // Visualize individual scan camera positions
       const n = scanCams.length;
       scanCams.forEach((c, i) => {
         const col = new THREE.Color().setHSL(i / n, 1, 0.65);
@@ -433,8 +481,7 @@ loader.load(
           new THREE.SphereGeometry(0.018, 8, 8),
           new THREE.MeshBasicMaterial({ color: col })
         );
-        dot.position.copy(c.pos);
-        scene.add(dot);
+        dot.position.copy(c.pos); scene.add(dot);
         const pts2 = [c.pos.clone(), c.pos.clone().addScaledVector(c.fwd, 0.12)];
         scene.add(new THREE.Line(
           new THREE.BufferGeometry().setFromPoints(pts2),
@@ -443,15 +490,16 @@ loader.load(
       });
     }
 
-    // ── Info box ───────────────────────────────────────────────────────────
-    const ptCount = allPoints.reduce((s,p)=>s+(p.geometry?.attributes?.position?.count??0),0);
+    // ── Info box ───────────────────────────────────────────────────────────────────────────
+    const ptCount = allPoints.reduce((s,p) => s + (p.geometry?.attributes?.position?.count ?? 0), 0);
     let sceneHtml = `Punkte: <b>${ptCount.toLocaleString('de-DE')}</b><br>B×H×T: <b>${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)} m</b>`;
     if (scanCams.length > 0) sceneHtml += `<br>Scan-Kameras: <b>${scanCams.length}</b> • <span style="color:#4fc">auto-detektiert</span>`;
-    document.getElementById('info-scene').innerHTML = sceneHtml;
+    else sceneHtml += `<br><span style="color:#fa8">⚠ Keine Scan-Kameras im GLB – bitte manuell setzen</span>`;
+    infoScene.innerHTML = sceneHtml;
     document.getElementById('info-box').style.display = 'block';
     controlsEl.style.display = 'flex';
 
-    // Restore saved camera marker (after scene is ready)
+    // Restore saved camera marker
     if (camWorldPos && localStorage.getItem('neptun_cam_pos')) placeCamAt(camWorldPos, 'manual');
 
     overlay.classList.add('hidden');
@@ -465,7 +513,7 @@ loader.load(
       ovStatus.textContent = `Lade … ${(xhr.loaded/1_048_576).toFixed(1)} MB`;
     }
   },
-  (err) => { ovStatus.textContent=`Fehler: ${err.message}`; ovStatus.style.color='#f66'; console.error(err); }
+  (err) => { ovStatus.textContent = `Fehler: ${err.message}`; ovStatus.style.color = '#f66'; console.error(err); }
 );
 
 // Reset
@@ -474,10 +522,22 @@ document.getElementById('btn-reset').addEventListener('click', () => flyTo(homeP
 // Camera placement mode
 document.getElementById('btn-place-cam').addEventListener('click', () => {
   placingCam = !placingCam;
+  if (placingCam) { calibratingFwd = false; calHintBar.style.display = 'none'; }
   const btn = document.getElementById('btn-place-cam');
   btn.classList.toggle('active', placingCam);
   btn.textContent = placingCam ? '📍 Irgendwo klicken…' : '📍 Kamera setzen';
   renderer.domElement.style.cursor = placingCam ? 'crosshair' : 'default';
+});
+
+// Calibration mode: click where the camera looks at Pan=90, Tilt=90
+btnCalFwd.addEventListener('click', () => {
+  if (!camWorldPos) return;
+  calibratingFwd = !calibratingFwd;
+  if (calibratingFwd) { placingCam = false; document.getElementById('btn-place-cam').classList.remove('active'); document.getElementById('btn-place-cam').textContent = '📍 Kamera setzen'; }
+  btnCalFwd.classList.toggle('active', calibratingFwd);
+  btnCalFwd.textContent = calibratingFwd ? '🎯 Blickziel klicken…' : '🎯 Pan90-Ziel';
+  calHintBar.style.display = calibratingFwd ? 'block' : 'none';
+  renderer.domElement.style.cursor = calibratingFwd ? 'crosshair' : 'default';
 });
 
 // Raycaster
@@ -486,23 +546,45 @@ ray.params.Points.threshold = 0.05;
 const mouse = new THREE.Vector2();
 let dsx = 0, dsy = 0;
 
-renderer.domElement.addEventListener('mousedown', e => { dsx=e.clientX; dsy=e.clientY; });
+renderer.domElement.addEventListener('mousedown', e => { dsx = e.clientX; dsy = e.clientY; });
 renderer.domElement.addEventListener('click', e => {
-  if ((e.clientX-dsx)**2+(e.clientY-dsy)**2 > 25) return;
-  mouse.x =  (e.clientX/innerWidth)*2-1;
-  mouse.y = -(e.clientY/innerHeight)*2+1;
+  if ((e.clientX-dsx)**2 + (e.clientY-dsy)**2 > 25) return;
+  mouse.x =  (e.clientX / innerWidth)  * 2 - 1;
+  mouse.y = -(e.clientY / innerHeight) * 2 + 1;
   ray.setFromCamera(mouse, camera);
 
-  // In placement mode: also hit floor plane so camera can be placed in empty space
-  const targets = (placingCam && floorPlane)
+  const targets = ((placingCam || calibratingFwd) && floorPlane)
     ? [...allPoints, floorPlane]
     : allPoints;
   const hits = ray.intersectObjects(targets, false);
   if (!hits.length) return;
 
   const pt = hits[0].point;
-  ring(e.clientX, e.clientY, placingCam ? 'cam' : 'tgt');
 
+  // ── Calibration: set heading from camera-pos → clicked target ─────────────────────
+  if (calibratingFwd && camWorldPos) {
+    const dx = pt.x - camWorldPos.x;
+    const dz = pt.z - camWorldPos.z;
+    let h = Math.round(Math.atan2(dx, dz) * 180 / Math.PI);
+    if (h < 0) h += 360;
+    headingDeg = h;
+    headingSl.value = h;
+    headingValEl.textContent = h + '°';
+    localStorage.setItem('neptun_heading', h.toString());
+    updateArrow();
+    // Update cam info display
+    infoCam.innerHTML = `📍 <b>${camWorldPos.x.toFixed(2)}, ${camWorldPos.y.toFixed(2)}, ${camWorldPos.z.toFixed(2)}</b> · Richtg: <b>${h}°</b> <span style="color:#ff0">✓ kalibriert</span>`;
+    calibratingFwd = false;
+    btnCalFwd.classList.remove('active');
+    btnCalFwd.textContent = '🎯 Pan90-Ziel';
+    calHintBar.style.display = 'none';
+    renderer.domElement.style.cursor = 'default';
+    ring(e.clientX, e.clientY, 'cal');
+    if (lastTargetPt) displayPanTilt(lastTargetPt);
+    return;
+  }
+
+  // ── Camera placement ───────────────────────────────────────────────────────────────
   if (placingCam) {
     placeCamAt(pt, 'manual');
     placingCam = false;
@@ -510,15 +592,19 @@ renderer.domElement.addEventListener('click', e => {
     btn.classList.remove('active');
     btn.textContent = '📍 Kamera setzen';
     renderer.domElement.style.cursor = 'default';
-  } else {
-    flyTo(pt, null, true);
-    if (camWorldPos) displayPanTilt(pt);
+    ring(e.clientX, e.clientY, 'cam');
+    return;
   }
+
+  // ── Normal click: aim viewer + compute Pan/Tilt ────────────────────────────────────
+  flyTo(pt, null, true);
+  ring(e.clientX, e.clientY, 'tgt');
+  if (camWorldPos) displayPanTilt(pt);
 });
 
 function ring(cx, cy, type) {
   clickRing.style.left = cx+'px'; clickRing.style.top = cy+'px';
-  clickRing.classList.remove('pulse','cam','tgt');
+  clickRing.classList.remove('pulse','cam','tgt','cal');
   void clickRing.offsetWidth;
   clickRing.classList.add('pulse', type);
 }
@@ -536,9 +622,9 @@ function flyTo(orbitTarget, exactCamPos=null, keepDist=false) {
     const off = new THREE.Vector3().subVectors(camera.position, orbitCtrl.target);
     anim.tc.copy(orbitTarget).addScaledVector(off.normalize(), Math.min(off.length(), Math.max(.4, off.length()*.65)));
   } else { anim.tc.copy(camera.position); }
-  anim.t=0; anim.on=true;
+  anim.t = 0; anim.on = true;
 }
-function ease(t){ return t<.5?4*t*t*t:1-(-2*t+2)**3/2; }
+function ease(t){ return t<.5 ? 4*t*t*t : 1-(-2*t+2)**3/2; }
 
 // Render loop
 const clock = new THREE.Clock();
@@ -546,11 +632,11 @@ const clock = new THREE.Clock();
   requestAnimationFrame(tick);
   const dt = clock.getDelta();
   if (anim.on) {
-    anim.t = Math.min(anim.t+dt/anim.dur,1);
+    anim.t = Math.min(anim.t + dt / anim.dur, 1);
     const t = ease(anim.t);
-    camera.position.lerpVectors(anim.fc,anim.tc,t);
-    orbitCtrl.target.lerpVectors(anim.ft,anim.tt,t);
-    if (anim.t>=1) anim.on=false;
+    camera.position.lerpVectors(anim.fc, anim.tc, t);
+    orbitCtrl.target.lerpVectors(anim.ft, anim.tt, t);
+    if (anim.t >= 1) anim.on = false;
   }
   orbitCtrl.update();
   renderer.render(scene, camera);
