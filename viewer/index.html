@@ -118,12 +118,10 @@ import * as THREE        from 'three';
 import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-// Servo limits – mirrors neptun/config.py
 const PAN_HOME = 90, TILT_HOME = 90;
 const PAN_MIN  = 0,  PAN_MAX   = 180;
 const TILT_MIN = 70, TILT_MAX  = 120;
 
-// Renderer
 const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.setSize(innerWidth, innerHeight);
@@ -145,7 +143,6 @@ window.addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// DOM refs
 const ovBar        = document.getElementById('ov-bar');
 const ovStatus     = document.getElementById('ov-status');
 const overlay      = document.getElementById('overlay');
@@ -162,7 +159,6 @@ const headingValEl = document.getElementById('heading-val');
 const btnCalFwd    = document.getElementById('btn-cal-fwd');
 const calHintBar   = document.getElementById('cal-hint-bar');
 
-// State
 const allPoints    = [];
 const homePos      = { cam: new THREE.Vector3(), tgt: new THREE.Vector3() };
 let camMarker      = null;
@@ -175,7 +171,6 @@ let lastPanTilt    = null;
 let floorPlane     = null;
 let headingRayLine = null;
 
-// Settings (Supabase credentials from localStorage)
 function loadSettings() {
   headingDeg = parseFloat(localStorage.getItem('neptun_heading') ?? 'NaN');
   if (isNaN(headingDeg)) headingDeg = 0;
@@ -199,14 +194,13 @@ document.getElementById('btn-sb-save').addEventListener('click', () => {
 headingSl.addEventListener('input', () => {
   headingDeg = parseInt(headingSl.value);
   headingValEl.textContent = headingDeg + '°';
-  updateArrow();
+  updateHeadingRay();
   if (lastTargetPt && camWorldPos) displayPanTilt(lastTargetPt);
 });
 document.getElementById('btn-settings').addEventListener('click', () => {
   settingsEl.style.display = settingsEl.style.display === 'none' ? 'block' : 'none';
 });
 
-// Camera marker
 function buildCamMarker() {
   const g = new THREE.Group();
   g.add(new THREE.Mesh(
@@ -218,27 +212,10 @@ function buildCamMarker() {
     new THREE.MeshBasicMaterial({ color: 0x00aa88 })
   );
   post.position.y = -0.06; g.add(post);
-
-  const ag = new THREE.Group(); ag.name = 'ag';
-  const shaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.005, 0.005, 0.1, 6),
-    new THREE.MeshBasicMaterial({ color: 0xddcc22 })
-  );
-  shaft.rotation.x = Math.PI / 2; shaft.position.z = 0.06; ag.add(shaft);
-  const tip = new THREE.Mesh(
-    new THREE.ConeGeometry(0.02, 0.06, 8),
-    new THREE.MeshBasicMaterial({ color: 0xffee44 })
-  );
-  tip.rotation.x = Math.PI / 2; tip.position.z = 0.13; ag.add(tip);
-  g.add(ag);
   return g;
 }
 
-function updateArrow() {
-  if (!camMarker) return;
-  const ag = camMarker.getObjectByName('ag');
-  if (ag) ag.rotation.y = -(headingDeg * Math.PI / 180);
-
+function updateHeadingRay() {
   if (headingRayLine) {
     scene.remove(headingRayLine);
     headingRayLine.geometry.dispose();
@@ -263,7 +240,7 @@ function placeCamAt(pos, source = 'manual') {
   if (!camMarker) { camMarker = buildCamMarker(); scene.add(camMarker); }
   camMarker.position.copy(pos);
   camWorldPos = pos.clone();
-  updateArrow();
+  updateHeadingRay();
   if (source === 'manual') {
     localStorage.setItem('neptun_cam_pos', JSON.stringify({ x: pos.x, y: pos.y, z: pos.z }));
   }
@@ -276,8 +253,6 @@ function placeCamAt(pos, source = 'manual') {
   if (lastTargetPt) displayPanTilt(lastTargetPt);
 }
 
-// Pan/Tilt computation
-// heading = direction camera faces at Pan=90° (home)
 // Target RIGHT of heading → panOfs > 0 → pan = 90 + panOfs > 90 → servo right
 // Target ABOVE camera   → elevDeg > 0 → tilt = 90 + elevDeg > 90 → servo up
 function computePanTilt(camPos, tgtPos) {
@@ -325,7 +300,6 @@ function refreshSendBtn() {
   manualHint.style.display = hasSb ? 'block' : 'none';
 }
 
-// Send via Supabase REST
 btnSend.addEventListener('click', async () => {
   if (!lastPanTilt) return;
   const url    = localStorage.getItem('neptun_sb_url');
@@ -359,12 +333,10 @@ btnSend.addEventListener('click', async () => {
   }, 2500);
 });
 
-// ── DA3 frustum helpers ───────────────────────────────────────────────────────────────────────────────────────
 function _frustumApex(node) {
   const pos = node.geometry.attributes.position;
   const idx = node.geometry.index;
   if (!pos || pos.count < 4) return null;
-
   if (idx) {
     const usage = new Uint32Array(pos.count);
     for (let i = 0; i < idx.count; i++) usage[idx.array[i]]++;
@@ -409,7 +381,6 @@ function _frustumFwd(node, apex) {
   return fwd.length() > 0.001 ? fwd.normalize() : null;
 }
 
-// ── Heading derivation from scan_metadata.json ──────────────────────────────────────────────────
 // pan = 90 + panOfs  ⇒  panOfs = pan - 90
 // fwdAngle_i = heading + panOfs_i = heading + (pan_i - 90)
 // heading = fwdAngle_i - pan_i + 90
@@ -427,12 +398,10 @@ function _deriveHeading(scanCams, metaFrames) {
   return Math.round(heading);
 }
 
-// ── Start metadata fetch in parallel with GLB load ──────────────────────────────────────────────
 const metaPromise = fetch('scan_metadata.json')
   .then(r => r.ok ? r.json() : null)
   .catch(() => null);
 
-// Load GLB
 const loader = new GLTFLoader();
 loader.load(
   'scene.glb',
@@ -445,10 +414,8 @@ loader.load(
     if (scanMeta) console.log(`[DA3] scan_metadata.json: ${scanMeta.frame_count} Frames`);
     else          console.log('[DA3] scan_metadata.json nicht gefunden – manuell kalibrieren');
 
-    // ── Detect scan cameras ────────────────────────────────────────────────────────────────────────────────────
-const scanCams = [];
+    const scanCams = [];
 
-    // Method 1: Three.js native camera nodes
     gltf.scene.traverse(node => {
       if (!node.isCamera) return;
       const pos = new THREE.Vector3(), quat = new THREE.Quaternion();
@@ -457,7 +424,6 @@ const scanCams = [];
       scanCams.push({ pos, fwd });
     });
 
-    // Method 2: Raw GLTF JSON camera references
     if (scanCams.length === 0 && (gltf.parser.json.cameras?.length ?? 0) > 0) {
       const json = gltf.parser.json;
       const threeByNodeIdx = new Map();
@@ -476,7 +442,6 @@ const scanCams = [];
       });
     }
 
-    // Method 3: DA3 frustum Line objects
     if (scanCams.length === 0) {
       const frustumNodes = [];
       gltf.scene.traverse(node => {
@@ -502,7 +467,6 @@ const scanCams = [];
 
     console.log(`[DA3] ${scanCams.length} Scan-Kamera(s) erkannt`);
 
-    // ── Extract point cloud / meshes ───────────────────────────────────────────────────────────────────────────────────────
     gltf.scene.traverse(node => {
       if (node.isPoints) {
         const c = node.clone(); scene.add(c); allPoints.push(c); return;
@@ -537,7 +501,6 @@ const scanCams = [];
       ovStatus.style.color = '#f66'; return;
     }
 
-    // ── Fit viewer camera ──────────────────────────────────────────────────────────────────────────────────────────
     const box  = new THREE.Box3().setFromObject(scene);
     const ctr  = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
@@ -556,7 +519,6 @@ const scanCams = [];
     floorPlane.position.y = box.min.y;
     scene.add(floorPlane);
 
-    // ── Auto-place NEPTUN marker ─────────────────────────────────────────────────────────────────────────────────────
     if (scanCams.length > 0) {
       const avgPos = new THREE.Vector3();
       scanCams.forEach(c => avgPos.add(c.pos));
@@ -605,7 +567,6 @@ const scanCams = [];
       }
     }
 
-    // ── Info box ─────────────────────────────────────────────────────────────────────────────────────────────
     const ptCount = allPoints.reduce((s,p) => s + (p.geometry?.attributes?.position?.count ?? 0), 0);
     let sceneHtml = `Punkte: <b>${ptCount.toLocaleString('de-DE')}</b><br>B×H×T: <b>${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)} m</b>`;
     if (scanCams.length > 0) {
@@ -634,10 +595,8 @@ const scanCams = [];
   (err) => { ovStatus.textContent = `Fehler: ${err.message}`; ovStatus.style.color = '#f66'; console.error(err); }
 );
 
-// Reset
 document.getElementById('btn-reset').addEventListener('click', () => flyTo(homePos.tgt, homePos.cam));
 
-// Camera placement mode
 document.getElementById('btn-place-cam').addEventListener('click', () => {
   placingCam = !placingCam;
   if (placingCam) { calibratingFwd = false; calHintBar.style.display = 'none'; }
@@ -647,7 +606,6 @@ document.getElementById('btn-place-cam').addEventListener('click', () => {
   renderer.domElement.style.cursor = placingCam ? 'crosshair' : 'default';
 });
 
-// Calibration mode
 btnCalFwd.addEventListener('click', () => {
   if (!camWorldPos) return;
   calibratingFwd = !calibratingFwd;
@@ -658,7 +616,6 @@ btnCalFwd.addEventListener('click', () => {
   renderer.domElement.style.cursor = calibratingFwd ? 'crosshair' : 'default';
 });
 
-// Raycaster
 const ray   = new THREE.Raycaster();
 ray.params.Points.threshold = 0.05;
 const mouse = new THREE.Vector2();
@@ -688,7 +645,7 @@ renderer.domElement.addEventListener('click', e => {
     headingSl.value = h;
     headingValEl.textContent = h + '°';
     localStorage.setItem('neptun_heading', h.toString());
-    updateArrow();
+    updateHeadingRay();
     infoCam.innerHTML = `📍 <b>${camWorldPos.x.toFixed(2)}, ${camWorldPos.y.toFixed(2)}, ${camWorldPos.z.toFixed(2)}</b> · Heading: <b>${h}°</b> <span style="color:#ff0">✓ manuell</span>`;
     calibratingFwd = false;
     btnCalFwd.classList.remove('active');
