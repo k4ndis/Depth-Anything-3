@@ -1,22 +1,31 @@
 #!/usr/bin/env python3
 """
-watcher.py – PC-seitiger DA3-Scan-Watcher
-==========================================
-Ueberwacht Supabase auf scan_status = "processing", laedt dann die
-Pi-Frames herunter, fuehrt Depth-Anything-3 aus und laedt scene.glb hoch.
-Das Dashboard erkennt scan_status = "complete" und zeigt die 3D-Karte.
+watcher.py – PC-seitiger DA3- und RealityScan-Watcher
+======================================================
+Überwacht Supabase auf scan_status = "processing", lädt dann die
+27 Pi-Frames herunter und führt zwei Verarbeitungspfade sequenziell aus:
 
-Konfiguration ueber .env (oder Umgebungsvariablen):
-    SUPABASE_URL      Projekt-URL (https://xxx.supabase.co)
-    SUPABASE_KEY      service_role Key
-    NEPTUN_DEVICE_ID  UUID des Pi-Geraets in der devices-Tabelle
-    DA3_CMD           DA3-Binary (Standard: da3)
-    DA3_MODEL_DIR     Modellpfad fuer DA3
-                      (Standard: depth-anything/DA3-LARGE)
-    WORKSPACE_DIR     Lokales Eingabeverzeichnis fuer Frames
-                      (Standard: workspace/scan_input)
-    VIEWER_DIR        DA3-Ausgabeverzeichnis fuer scene.glb
-                      (Standard: viewer)
+  PFAD A – DA3 (schnell, 6 Frames):
+    Wählt 6 Frames aus der Tilt=90°-Reihe aus
+    (Pan-Positionen: 10, 50, 70, 110, 130, 170°).
+    DA3 erzeugt scene.glb → Supabase → scan_status = "complete".
+
+  PFAD B – RealityScan 2.0 (langsam, 27 Frames):
+    Alle 27 Frames → RealityScan CLI → scene_mesh.glb
+    → Supabase → mesh_status = "complete".
+
+Konfiguration über .env (oder Umgebungsvariablen):
+    SUPABASE_URL        Projekt-URL (https://xxx.supabase.co)
+    SUPABASE_KEY        service_role Key
+    NEPTUN_DEVICE_ID    UUID des Pi-Geräts in der devices-Tabelle
+    DA3_CMD             DA3-Binary                    (Standard: da3)
+    DA3_MODEL_DIR       Modellpfad für DA3
+                        (Standard: depth-anything/DA3-LARGE)
+    WORKSPACE_DIR       Lokales Eingabeverzeichnis     (Standard: workspace/scan_input)
+    VIEWER_DIR          DA3-Ausgabe für scene.glb       (Standard: viewer)
+    REALITYSCAN_EXE     Pfad zur RealityScan.exe
+                        (Standard: /mnt/c/Program Files/Epic Games/
+                         RealityScan_2.1/RealityScan.exe)
 
 Starten (aus ~/Depth-Anything-3):
     python watcher.py
@@ -35,7 +44,7 @@ try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass  # python-dotenv optional; Umgebungsvariablen koennen direkt gesetzt werden
+    pass
 
 from supabase import create_client
 
@@ -48,6 +57,9 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_S = 10.0
 
+# 6 Pan-Positionen aus der Tilt=90°-Reihe, die DA3 erhält (Indices 0,2,3,5,6,8)
+_DA3_PAN_SUBSET = {10.0, 50.0, 70.0, 110.0, 130.0, 170.0}
+
 
 def _require_env(key: str) -> str:
     val = os.environ.get(key)
@@ -57,7 +69,7 @@ def _require_env(key: str) -> str:
     return val
 
 
-def _set_status(sb, device_id: str, status: str) -> None:
+def _set_scan_status(sb, device_id: str, status: str) -> None:
     try:
         sb.table("devices").update({"scan_status": status}).eq("id", device_id).execute()
         logger.info(f"scan_status → '{status}'")
@@ -65,12 +77,20 @@ def _set_status(sb, device_id: str, status: str) -> None:
         logger.warning(f"scan_status-Update fehlgeschlagen: {exc}")
 
 
+def _set_mesh_status(sb, device_id: str, status: str) -> None:
+    try:
+        sb.table("devices").update({"mesh_status": status}).eq("id", device_id).execute()
+        logger.info(f"mesh_status → '{status}'")
+    except Exception as exc:
+        logger.warning(f"mesh_status-Update fehlgeschlagen: {exc}")
+
+
 def _download_frames(sb, device_id: str, workspace: Path, metadata: dict) -> bool:
-    """Laedt alle Frames aus Supabase Storage in workspace/ herunter."""
+    """Lädt alle Frames aus Supabase Storage nach workspace/ herunter."""
     workspace.mkdir(parents=True, exist_ok=True)
     storage = sb.storage.from_("scans")
     for frame in metadata["frames"]:
-        src = f"{device_id}/frames/{frame['filename']}"
+        src  = f"{device_id}/frames/{frame['filename']}"
         dest = workspace / frame["filename"]
         try:
             data = storage.download(src)
@@ -82,14 +102,40 @@ def _download_frames(sb, device_id: str, workspace: Path, metadata: dict) -> boo
     return True
 
 
+def _select_da3_frames(metadata: dict) -> list[dict]:
+    """Wählt 6 Frames aus der Tilt≈90°-Reihe für DA3 aus."""
+    tilt90   = [f for f in metadata["frames"] if abs(f["tilt_deg"] - 90.0) < 1.0]
+    selected = [f for f in tilt90 if f["pan_deg"] in _DA3_PAN_SUBSET]
+    selected.sort(key=lambda f: f["pan_deg"])
+    return selected
+
+
+def _prepare_da3_input(workspace: Path, da3_frames: list[dict]) -> Path:
+    """Kopiert die 6 DA3-Frames in workspace/da3_input/ und schreibt Sub-Metadata."""
+    da3_dir = workspace.parent / "da3_input"
+    if da3_dir.exists():
+        shutil.rmtree(da3_dir)
+    da3_dir.mkdir(parents=True)
+
+    for frame in da3_frames:
+        shutil.copy2(workspace / frame["filename"], da3_dir / frame["filename"])
+
+    sub_meta = {"frames": da3_frames, "frame_count": len(da3_frames)}
+    (da3_dir / "scan_metadata.json").write_text(
+        json.dumps(sub_meta, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    logger.info(f"DA3-Eingabe: {len(da3_frames)} Frames in {da3_dir}")
+    return da3_dir
+
+
 def _run_da3(workspace: Path, viewer: Path, da3_cmd: str, model_dir: str) -> bool:
-    """Fuehrt DA3 aus. Gibt True bei Erfolg zurueck."""
+    """Führt DA3 aus. Gibt True bei Erfolg zurück."""
     viewer.mkdir(parents=True, exist_ok=True)
     cmd = [
         da3_cmd, "auto", str(workspace),
         "--export-format", "glb",
-        "--export-dir", str(viewer),
-        "--model-dir", model_dir,
+        "--export-dir",    str(viewer),
+        "--model-dir",     model_dir,
     ]
     logger.info(f"DA3-Befehl: {' '.join(cmd)}")
     try:
@@ -103,11 +149,41 @@ def _run_da3(workspace: Path, viewer: Path, da3_cmd: str, model_dir: str) -> boo
         return False
 
 
-def _upload_results(sb, device_id: str, viewer: Path, workspace: Path) -> bool:
-    """Laedt scene.glb + scan_metadata.json in Supabase Storage hoch."""
-    storage = sb.storage.from_("scans")
-    glb_path  = viewer / "scene.glb"
-    meta_path = workspace / "scan_metadata.json"
+def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> bool:
+    """
+    Führt RealityScan 2.0 CLI auf allen 27 Frames aus.
+    Ausgabe: viewer/scene_mesh.glb
+
+    Hinweis: Die genauen CLI-Flags richten sich nach der installierten
+    RealityScan-Version. Ggf. --input / --output / --format anpassen.
+    """
+    viewer.mkdir(parents=True, exist_ok=True)
+    output_glb = viewer / "scene_mesh.glb"
+    cmd = [
+        realityscan_exe,
+        "--input",  str(workspace),
+        "--output", str(output_glb),
+        "--format", "glb",
+    ]
+    logger.info(f"RealityScan-Befehl: {' '.join(cmd)}")
+    try:
+        result = subprocess.run(cmd, check=True, timeout=3600)
+        return result.returncode == 0
+    except subprocess.CalledProcessError as exc:
+        logger.error(f"RealityScan fehlgeschlagen (returncode={exc.returncode})")
+        return False
+    except subprocess.TimeoutExpired:
+        logger.error("RealityScan-Timeout (>60 min)")
+        return False
+    except FileNotFoundError:
+        logger.error(f"RealityScan.exe nicht gefunden: {realityscan_exe}")
+        return False
+
+
+def _upload_scene_glb(sb, device_id: str, viewer: Path, workspace: Path) -> bool:
+    """Lädt scene.glb + scan_metadata.json nach Supabase hoch."""
+    storage  = sb.storage.from_("scans")
+    glb_path = viewer / "scene.glb"
 
     if not glb_path.exists():
         logger.error(f"scene.glb nicht gefunden: {glb_path}")
@@ -122,6 +198,7 @@ def _upload_results(sb, device_id: str, viewer: Path, workspace: Path) -> bool:
             )
         logger.info(f"  ↑  {device_id}/scene.glb")
 
+        meta_path = workspace / "scan_metadata.json"
         if meta_path.exists():
             with open(meta_path, "rb") as fh:
                 storage.upload(
@@ -130,12 +207,33 @@ def _upload_results(sb, device_id: str, viewer: Path, workspace: Path) -> bool:
                     file_options={"content-type": "application/json", "upsert": "true"},
                 )
             logger.info(f"  ↑  {device_id}/scan_metadata.json")
-        else:
-            logger.warning("scan_metadata.json nicht gefunden – nur scene.glb hochgeladen")
 
         return True
     except Exception as exc:
-        logger.error(f"Upload fehlgeschlagen: {exc}", exc_info=True)
+        logger.error(f"Upload scene.glb fehlgeschlagen: {exc}", exc_info=True)
+        return False
+
+
+def _upload_mesh_glb(sb, device_id: str, viewer: Path) -> bool:
+    """Lädt scene_mesh.glb nach Supabase hoch."""
+    storage  = sb.storage.from_("scans")
+    glb_path = viewer / "scene_mesh.glb"
+
+    if not glb_path.exists():
+        logger.error(f"scene_mesh.glb nicht gefunden: {glb_path}")
+        return False
+
+    try:
+        with open(glb_path, "rb") as fh:
+            storage.upload(
+                path=f"{device_id}/scene_mesh.glb",
+                file=fh.read(),
+                file_options={"content-type": "model/gltf-binary", "upsert": "true"},
+            )
+        logger.info(f"  ↑  {device_id}/scene_mesh.glb")
+        return True
+    except Exception as exc:
+        logger.error(f"Upload scene_mesh.glb fehlgeschlagen: {exc}", exc_info=True)
         return False
 
 
@@ -146,58 +244,76 @@ def process_scan(
     viewer: Path,
     da3_cmd: str,
     model_dir: str,
+    realityscan_exe: str,
 ) -> None:
-    """Kompletter Verarbeitungs-Workflow fuer einen Scan."""
+    """Kompletter Verarbeitungs-Workflow: DA3 (Pfad A) dann RealityScan (Pfad B)."""
     logger.info("=== Scan-Verarbeitung startet ===")
 
-    # scan_metadata.json aus Storage laden
+    # scan_metadata.json aus Supabase laden
     try:
         meta_bytes = sb.storage.from_("scans").download(f"{device_id}/scan_metadata.json")
-        metadata = json.loads(meta_bytes.decode("utf-8"))
+        metadata   = json.loads(meta_bytes.decode("utf-8"))
     except Exception as exc:
         logger.error(f"scan_metadata.json konnte nicht geladen werden: {exc}")
-        _set_status(sb, device_id, "error")
+        _set_scan_status(sb, device_id, "error")
         return
 
-    # Altes Workspace-Verzeichnis leeren
+    # Altes Workspace leeren und alle 27 Frames herunterladen
     if workspace.exists():
         shutil.rmtree(workspace)
-
-    # Frames herunterladen
     if not _download_frames(sb, device_id, workspace, metadata):
-        _set_status(sb, device_id, "error")
+        _set_scan_status(sb, device_id, "error")
         return
 
-    # Metadata lokal ablegen (DA3 erwartet sie im Workspace)
     (workspace / "scan_metadata.json").write_bytes(
         json.dumps(metadata, indent=2, ensure_ascii=False).encode()
     )
 
-    # DA3 ausfuehren
-    if not _run_da3(workspace, viewer, da3_cmd, model_dir):
-        _set_status(sb, device_id, "error")
-        return
+    # ── PFAD A: DA3 (schnell, 6 Frames aus Tilt=90°-Reihe) ──────────────────
+    logger.info("--- PFAD A: DA3 ---")
+    da3_frames = _select_da3_frames(metadata)
+    if len(da3_frames) < 4:
+        logger.warning(f"Nur {len(da3_frames)} DA3-Frames gefunden – DA3 übersprungen.")
+        _set_scan_status(sb, device_id, "error")
+    else:
+        da3_input = _prepare_da3_input(workspace, da3_frames)
+        if _run_da3(da3_input, viewer, da3_cmd, model_dir):
+            if _upload_scene_glb(sb, device_id, viewer, workspace):
+                _set_scan_status(sb, device_id, "complete")
+            else:
+                _set_scan_status(sb, device_id, "error")
+        else:
+            _set_scan_status(sb, device_id, "error")
 
-    # Ergebnisse hochladen
-    if not _upload_results(sb, device_id, viewer, workspace):
-        _set_status(sb, device_id, "error")
-        return
+    # ── PFAD B: RealityScan (langsam, alle 27 Frames) ────────────────────────
+    logger.info("--- PFAD B: RealityScan ---")
+    if _run_realityscan(workspace, viewer, realityscan_exe):
+        if _upload_mesh_glb(sb, device_id, viewer):
+            _set_mesh_status(sb, device_id, "complete")
+        else:
+            _set_mesh_status(sb, device_id, "error")
+    else:
+        _set_mesh_status(sb, device_id, "error")
 
-    _set_status(sb, device_id, "complete")
     logger.info("=== Scan-Verarbeitung abgeschlossen ===")
 
 
 def main() -> None:
-    supabase_url = _require_env("SUPABASE_URL")
-    supabase_key = _require_env("SUPABASE_KEY")
-    device_id    = _require_env("NEPTUN_DEVICE_ID")
-    da3_cmd      = os.environ.get("DA3_CMD",      "da3")
-    model_dir    = os.environ.get("DA3_MODEL_DIR", "depth-anything/DA3-LARGE")
-    workspace    = Path(os.environ.get("WORKSPACE_DIR", "workspace/scan_input"))
-    viewer       = Path(os.environ.get("VIEWER_DIR",    "viewer"))
+    supabase_url    = _require_env("SUPABASE_URL")
+    supabase_key    = _require_env("SUPABASE_KEY")
+    device_id       = _require_env("NEPTUN_DEVICE_ID")
+    da3_cmd         = os.environ.get("DA3_CMD",       "da3")
+    model_dir       = os.environ.get("DA3_MODEL_DIR",  "depth-anything/DA3-LARGE")
+    workspace       = Path(os.environ.get("WORKSPACE_DIR", "workspace/scan_input"))
+    viewer          = Path(os.environ.get("VIEWER_DIR",    "viewer"))
+    realityscan_exe = os.environ.get(
+        "REALITYSCAN_EXE",
+        "/mnt/c/Program Files/Epic Games/RealityScan_2.1/RealityScan.exe",
+    )
 
     sb = create_client(supabase_url, supabase_key)
-    logger.info(f"BirdGuard DA3-Watcher gestartet – Device {device_id}")
+    logger.info(f"BirdGuard Watcher gestartet – Device {device_id}")
+    logger.info(f"RealityScan: {realityscan_exe}")
     logger.info(f"Polling alle {POLL_INTERVAL_S:.0f}s …")
 
     last_status: str | None = None
@@ -212,7 +328,7 @@ def main() -> None:
                 .execute()
             )
             if not res.data:
-                logger.warning("Device nicht gefunden – naechster Versuch in 30s")
+                logger.warning("Device nicht gefunden – nächster Versuch in 30s")
                 time.sleep(30.0)
                 continue
 
@@ -222,8 +338,11 @@ def main() -> None:
                 last_status = status
 
             if status == "processing":
-                process_scan(sb, device_id, workspace, viewer, da3_cmd, model_dir)
-                last_status = None  # Neu lesen beim naechsten Poll
+                process_scan(
+                    sb, device_id, workspace, viewer,
+                    da3_cmd, model_dir, realityscan_exe,
+                )
+                last_status = None
 
         except KeyboardInterrupt:
             logger.info("Watcher beendet.")
