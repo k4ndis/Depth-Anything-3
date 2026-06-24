@@ -179,18 +179,9 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     Fuehrt RealityScan 2.x (RealityCapture-Engine) auf allen 27 Frames aus.
     Ausgabe: viewer/scene_mesh.glb (texturiertes Mesh)
 
-    Pipeline:
-      -addFolder <win_path>          Frames einlesen
-      -align                         Kameras ausrichten
-      -selectMaximalComponent        groesste Komponente auswaehlen
-      -setReconstructionRegionAuto   Rekonstruktionsbereich setzen
-      -calculateHighModel            Geometrie berechnen
-      -calculateTexture              Fotos auf Mesh projizieren (Textur)
-      -renameSelectedModel scene_mesh
-      -exportModel scene_mesh <win_output.glb>
-      -quit
-
-    Pfade werden via _to_win_path() in Windows-Pfade konvertiert (WSL -> Windows).
+    Hinweis: RealityCapture beendet sich haeufig mit Exit-Code != 0, auch wenn
+    der Export erfolgreich war. Der Exit-Code wird daher ignoriert; stattdessen
+    wird geprueft ob scene_mesh.glb tatsaechlich existiert und Inhalt hat.
     """
     viewer.mkdir(parents=True, exist_ok=True)
     output_glb = viewer / "scene_mesh.glb"
@@ -212,10 +203,18 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     ]
     logger.info(f"RealityScan-Befehl: {' '.join(cmd)}")
     try:
-        result = subprocess.run(cmd, check=True, timeout=3600)
-        return result.returncode == 0
-    except subprocess.CalledProcessError as exc:
-        logger.error(f"RealityScan fehlgeschlagen (returncode={exc.returncode})")
+        result = subprocess.run(cmd, timeout=3600)
+        # RC exits non-zero even on success – trust the output file, not the exit code.
+        if output_glb.exists() and output_glb.stat().st_size > 0:
+            if result.returncode != 0:
+                logger.warning(
+                    f"RealityScan exitcode={result.returncode} aber "
+                    f"scene_mesh.glb ({output_glb.stat().st_size // 1024} KB) vorhanden – OK"
+                )
+            return True
+        logger.error(
+            f"RealityScan: scene_mesh.glb nicht erzeugt (exitcode={result.returncode})"
+        )
         return False
     except subprocess.TimeoutExpired:
         logger.error("RealityScan-Timeout (>60 min)")
@@ -260,7 +259,14 @@ def _upload_scene_glb(sb, device_id: str, viewer: Path, workspace: Path) -> bool
 
 
 def _upload_mesh_glb(sb, device_id: str, viewer: Path) -> bool:
-    """Lädt scene_mesh.glb nach Supabase hoch."""
+    """
+    Laedt scene_mesh.glb + alle scene_mesh*.png Textur-Sidecars nach Supabase hoch.
+
+    RealityCapture exportiert Texturen als externe PNG-Dateien neben dem GLB
+    (scene_mesh_u0_v0_diffuse.png etc.). Der GLB referenziert sie per relativem
+    Pfad, der im Browser gegen die Supabase-URL aufgeloest wird – deshalb muessen
+    die PNGs im gleichen Supabase-Ordner liegen wie die GLB.
+    """
     storage  = sb.storage.from_("scans")
     glb_path = viewer / "scene_mesh.glb"
 
@@ -276,6 +282,17 @@ def _upload_mesh_glb(sb, device_id: str, viewer: Path) -> bool:
                 file_options={"content-type": "model/gltf-binary", "upsert": "true"},
             )
         logger.info(f"  ↑  {device_id}/scene_mesh.glb")
+
+        # Externe Textur-Sidecars mituploaden (scene_mesh_u0_v0_diffuse.png etc.)
+        for png in sorted(viewer.glob("scene_mesh*.png")):
+            with open(png, "rb") as fh:
+                storage.upload(
+                    path=f"{device_id}/{png.name}",
+                    file=fh.read(),
+                    file_options={"content-type": "image/png", "upsert": "true"},
+                )
+            logger.info(f"  ↑  {device_id}/{png.name}")
+
         return True
     except Exception as exc:
         logger.error(f"Upload scene_mesh.glb fehlgeschlagen: {exc}", exc_info=True)
