@@ -177,15 +177,16 @@ def _to_win_path(path: Path) -> str:
 def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> bool:
     """
     Fuehrt RealityScan 2.x (RealityCapture-Engine) auf allen 27 Frames aus.
-    Ausgabe: viewer/scene_mesh.glb
+    Ausgabe: viewer/scene_mesh.glb (texturiertes Mesh)
 
-    RealityCapture-CLI verwendet Single-Dash-Batch-Commands:
-      -addFolder <win_path>
-      -align
-      -selectMaximalComponent
-      -setReconstructionRegionAuto
-      -calculateHighModel
-      -renameSelectedModel scene_mesh   <- weist dem Modell den Namen zu
+    Pipeline:
+      -addFolder <win_path>          Frames einlesen
+      -align                         Kameras ausrichten
+      -selectMaximalComponent        groesste Komponente auswaehlen
+      -setReconstructionRegionAuto   Rekonstruktionsbereich setzen
+      -calculateHighModel            Geometrie berechnen
+      -calculateTexture              Fotos auf Mesh projizieren (Textur)
+      -renameSelectedModel scene_mesh
       -exportModel scene_mesh <win_output.glb>
       -quit
 
@@ -204,6 +205,7 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         "-selectMaximalComponent",
         "-setReconstructionRegionAuto",
         "-calculateHighModel",
+        "-calculateTexture",
         "-renameSelectedModel",        "scene_mesh",
         "-exportModel",                "scene_mesh",  win_output,
         "-quit",
