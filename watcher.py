@@ -185,6 +185,7 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
       -selectMaximalComponent
       -setReconstructionRegionAuto
       -calculateHighModel
+      -renameSelectedModel scene_mesh   <- weist dem Modell den Namen zu
       -exportModel scene_mesh <win_output.glb>
       -quit
 
@@ -203,7 +204,8 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         "-selectMaximalComponent",
         "-setReconstructionRegionAuto",
         "-calculateHighModel",
-        "-exportModel", "scene_mesh",  win_output,
+        "-renameSelectedModel",        "scene_mesh",
+        "-exportModel",                "scene_mesh",  win_output,
         "-quit",
     ]
     logger.info(f"RealityScan-Befehl: {' '.join(cmd)}")
