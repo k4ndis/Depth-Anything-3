@@ -149,21 +149,62 @@ def _run_da3(workspace: Path, viewer: Path, da3_cmd: str, model_dir: str) -> boo
         return False
 
 
+def _to_win_path(path: Path) -> str:
+    """
+    Konvertiert einen Linux/WSL-Pfad in einen Windows-Pfad fuer Windows-Exe-Aufrufe.
+    Benutzt wslpath -w; Fallback fuer /mnt/<drive>/... Pfade.
+    """
+    try:
+        result = subprocess.run(
+            ["wslpath", "-w", str(path.resolve())],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except FileNotFoundError:
+        pass
+    # Fallback: /mnt/c/foo/bar -> C:\foo\bar
+    p = str(path.resolve())
+    if p.startswith("/mnt/") and len(p) > 6:
+        parts = p[5:].split("/", 1)
+        drive = parts[0].upper() + ":\\"
+        rest  = parts[1].replace("/", "\\") if len(parts) > 1 else ""
+        return drive + rest
+    # WSL Linux filesystem: /home/... -> \\wsl.localhost\Ubuntu\home\...
+    return "\\\\wsl.localhost\\Ubuntu" + p.replace("/", "\\")
+
+
 def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> bool:
     """
-    Führt RealityScan 2.0 CLI auf allen 27 Frames aus.
+    Fuehrt RealityScan 2.x (RealityCapture-Engine) auf allen 27 Frames aus.
     Ausgabe: viewer/scene_mesh.glb
 
-    Hinweis: Die genauen CLI-Flags richten sich nach der installierten
-    RealityScan-Version. Ggf. --input / --output / --format anpassen.
+    RealityCapture-CLI verwendet Single-Dash-Batch-Commands:
+      -addFolder <win_path>
+      -align
+      -selectMaximalComponent
+      -setReconstructionRegionAuto
+      -calculateHighModel
+      -exportModel scene_mesh <win_output.glb>
+      -quit
+
+    Pfade werden via _to_win_path() in Windows-Pfade konvertiert (WSL -> Windows).
     """
     viewer.mkdir(parents=True, exist_ok=True)
     output_glb = viewer / "scene_mesh.glb"
+
+    win_input  = _to_win_path(workspace)
+    win_output = _to_win_path(output_glb)
+
     cmd = [
         realityscan_exe,
-        "--input",  str(workspace),
-        "--output", str(output_glb),
-        "--format", "glb",
+        "-addFolder",                  win_input,
+        "-align",
+        "-selectMaximalComponent",
+        "-setReconstructionRegionAuto",
+        "-calculateHighModel",
+        "-exportModel", "scene_mesh",  win_output,
+        "-quit",
     ]
     logger.info(f"RealityScan-Befehl: {' '.join(cmd)}")
     try:
@@ -269,7 +310,7 @@ def process_scan(
         json.dumps(metadata, indent=2, ensure_ascii=False).encode()
     )
 
-    # ── PFAD A: DA3 (schnell, 6 Frames aus Tilt=90°-Reihe) ──────────────────
+    # ── PFAD A: DA3 (schnell, 6 Frames aus Tilt=90°-Reihe) ──────────────────────
     logger.info("--- PFAD A: DA3 ---")
     da3_frames = _select_da3_frames(metadata)
     if len(da3_frames) < 4:
@@ -285,7 +326,7 @@ def process_scan(
         else:
             _set_scan_status(sb, device_id, "error")
 
-    # ── PFAD B: RealityScan (langsam, alle 27 Frames) ────────────────────────
+    # ── PFAD B: RealityScan (langsam, alle 27 Frames) ──────────────────────
     logger.info("--- PFAD B: RealityScan ---")
     if _run_realityscan(workspace, viewer, realityscan_exe):
         if _upload_mesh_glb(sb, device_id, viewer):
