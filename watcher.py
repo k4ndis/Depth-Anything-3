@@ -12,7 +12,8 @@ watcher.py – PC-seitiger DA3- und RealityScan-Watcher
 
   PFAD B – RealityScan 2.0 (langsam, 27 Frames):
     Alle 27 Frames → RealityScan CLI → scene_mesh.glb
-    → Draco-Komprimierung (Geometrie) → WebP-Komprimierung (Texturen, falls nötig)
+    → Draco-Komprimierung (Geometrie)
+    → WebP q75 (Texturen, falls noch über 50 MB)
     → Supabase → mesh_status = "complete".
 
 Konfiguration über .env (oder Umgebungsvariablen):
@@ -288,15 +289,16 @@ def _compress_draco(viewer: Path) -> bool:
 
 def _compress_textures_webp(viewer: Path) -> bool:
     """
-    Komprimiert Texturen in scene_mesh.glb zu WebP (ca. 70-80% kleiner als PNG/JPEG).
+    Komprimiert eingebettete Texturen in scene_mesh.glb zu lossy WebP (quality 75).
 
-    Draco komprimiert nur Geometrie. Bei texturierten RealityScan-Meshes machen
-    Texturen oft 60-70% der Dateigröße aus. Dieser Schritt wird aufgerufen wenn
-    das GLB nach Draco noch über _SUPABASE_MAX_MB liegt.
+    Draco komprimiert nur Geometrie. RealityScan bettet Texturen als JPEG ein;
+    dieser Schritt re-kodiert sie als lossy WebP (q75), was bei Fotos 30-50%
+    kleiner als JPEG bei gleicher visueller Qualität ist.
 
-    Erwartetes Ergebnis nach Draco + WebP: ~15-25 MB (von 150 MB Ausgangsgröße).
+    WICHTIG: Kein lossless WebP verwenden (Standard von gltf-transform) –
+    lossless WebP ist bei JPEG-Quellmaterial deutlich größer als JPEG.
 
-    Benötigt gltf-transform >= 4.x (npm install -g @gltf-transform/cli).
+    Erwartetes Ergebnis nach Draco + WebP q75: ~20-30 MB (von 150 MB Ausgangsgröße).
     """
     input_glb  = viewer / "scene_mesh.glb"
     output_glb = viewer / "scene_mesh_webp.glb"
@@ -304,14 +306,18 @@ def _compress_textures_webp(viewer: Path) -> bool:
         return False
     try:
         result = subprocess.run(
-            [_GLTF_TRANSFORM_CMD, "webp", str(input_glb), str(output_glb)],
+            [
+                _GLTF_TRANSFORM_CMD, "webp",
+                "--quality", "75",
+                str(input_glb), str(output_glb),
+            ],
             capture_output=True, text=True, timeout=300,
         )
         if result.returncode == 0 and output_glb.exists() and output_glb.stat().st_size > 0:
             mb_before = input_glb.stat().st_size  / 1024 / 1024
             mb_after  = output_glb.stat().st_size / 1024 / 1024
             reduction = (1 - mb_after / mb_before) * 100
-            logger.info(f"WebP: {mb_before:.1f} MB → {mb_after:.1f} MB ({reduction:.0f}% kleiner)")
+            logger.info(f"WebP q75: {mb_before:.1f} MB → {mb_after:.1f} MB ({reduction:.0f}% kleiner)")
             input_glb.unlink()
             output_glb.rename(input_glb)
             return True
@@ -466,7 +472,7 @@ def process_scan(
         if _glb.exists() and _glb.stat().st_size / 1024 / 1024 > _SUPABASE_MAX_MB:
             logger.info(
                 f"Nach Draco noch über {_SUPABASE_MAX_MB:.0f} MB – "
-                f"WebP-Texturkomprimierung ..."
+                f"WebP-Texturkomprimierung (lossy q75) ..."
             )
             _compress_textures_webp(viewer)
         if _upload_mesh_glb(sb, device_id, viewer):
@@ -495,7 +501,7 @@ def main() -> None:
     sb = create_client(supabase_url, supabase_key)
     logger.info(f"BirdGuard Watcher gestartet – Device {device_id}")
     logger.info(f"RealityScan: {realityscan_exe}")
-    logger.info(f"Draco + WebP-Komprimierung: {_GLTF_TRANSFORM_CMD}")
+    logger.info(f"Draco + WebP q75 Komprimierung: {_GLTF_TRANSFORM_CMD}")
     logger.info(f"Polling alle {POLL_INTERVAL_S:.0f}s …")
 
     last_status: str | None = None
