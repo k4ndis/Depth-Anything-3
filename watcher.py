@@ -12,7 +12,7 @@ watcher.py – PC-seitiger DA3- und RealityScan-Watcher
 
   PFAD B – RealityScan 2.0 (langsam, 27 Frames):
     Alle 27 Frames → RealityScan CLI → scene_mesh.glb
-    → Supabase → mesh_status = "complete".
+    → Draco-Komprimierung (optional) → Supabase → mesh_status = "complete".
 
 Konfiguration über .env (oder Umgebungsvariablen):
     SUPABASE_URL        Projekt-URL (https://xxx.supabase.co)
@@ -26,6 +26,8 @@ Konfiguration über .env (oder Umgebungsvariablen):
     REALITYSCAN_EXE     Pfad zur RealityScan.exe
                         (Standard: /mnt/c/Program Files/Epic Games/
                          RealityScan_2.1/RealityScan.exe)
+    GLTF_TRANSFORM_CMD  Pfad zu gltf-transform CLI     (Standard: gltf-transform)
+                        Installieren: npm install -g @gltf-transform/cli
 
 Starten (aus ~/Depth-Anything-3):
     python watcher.py
@@ -59,6 +61,9 @@ POLL_INTERVAL_S = 10.0
 
 # 6 Pan-Positionen aus der Tilt=90°-Reihe, die DA3 erhält (Indices 0,2,3,5,6,8)
 _DA3_PAN_SUBSET = {10.0, 50.0, 70.0, 110.0, 130.0, 170.0}
+
+# gltf-transform CLI für Draco-Komprimierung (npm install -g @gltf-transform/cli)
+_GLTF_TRANSFORM_CMD = os.environ.get("GLTF_TRANSFORM_CMD", "gltf-transform")
 
 
 def _require_env(key: str) -> str:
@@ -222,8 +227,7 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
             if size_mb > 50:
                 logger.warning(
                     f"scene_mesh.glb ist {size_mb:.1f} MB – überschreitet Supabase-Limit "
-                    f"(50 MB). Upload könnte scheitern. "
-                    f"Limit erhöhen: Supabase Dashboard → Storage → Policies."
+                    f"(50 MB). Draco-Komprimierung wird versucht ..."
                 )
             return True
         logger.error(
@@ -235,6 +239,54 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         return False
     except FileNotFoundError:
         logger.error(f"RealityScan.exe nicht gefunden: {realityscan_exe}")
+        return False
+
+
+def _compress_draco(viewer: Path) -> bool:
+    """
+    Komprimiert scene_mesh.glb mit Draco-Geometrie-Komprimierung (verlustfrei).
+
+    Draco kodiert Mesh-Geometrie effizienter ohne Qualitätsverlust.
+    Typische Reduktion: 85-90% – 148 MB → ~15-22 MB.
+
+    Benötigt gltf-transform CLI:
+        npm install -g @gltf-transform/cli
+    Pfad überschreiben: Umgebungsvariable GLTF_TRANSFORM_CMD setzen.
+
+    Gibt True bei Erfolg zurück. Wenn gltf-transform nicht installiert ist,
+    wird False zurückgegeben und der Upload mit der unkomprimierten Datei
+    fortgesetzt.
+    """
+    input_glb  = viewer / "scene_mesh.glb"
+    output_glb = viewer / "scene_mesh_draco.glb"
+    if not input_glb.exists():
+        return False
+    try:
+        result = subprocess.run(
+            [_GLTF_TRANSFORM_CMD, "draco", str(input_glb), str(output_glb)],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode == 0 and output_glb.exists() and output_glb.stat().st_size > 0:
+            mb_before = input_glb.stat().st_size  / 1024 / 1024
+            mb_after  = output_glb.stat().st_size / 1024 / 1024
+            reduction = (1 - mb_after / mb_before) * 100
+            logger.info(f"Draco: {mb_before:.1f} MB → {mb_after:.1f} MB ({reduction:.0f}% kleiner)")
+            input_glb.unlink()
+            output_glb.rename(input_glb)
+            return True
+        logger.warning(
+            f"Draco-Komprimierung fehlgeschlagen (exitcode={result.returncode}): "
+            f"{result.stderr.strip()}"
+        )
+        return False
+    except FileNotFoundError:
+        logger.warning(
+            "gltf-transform nicht gefunden – Draco-Komprimierung übersprungen. "
+            "Installieren mit: npm install -g @gltf-transform/cli"
+        )
+        return False
+    except subprocess.TimeoutExpired:
+        logger.error("Draco-Komprimierung: Timeout (>5 min)")
         return False
 
 
@@ -288,6 +340,13 @@ def _upload_mesh_glb(sb, device_id: str, viewer: Path) -> bool:
         logger.error(f"scene_mesh.glb nicht gefunden: {glb_path}")
         return False
 
+    size_mb = glb_path.stat().st_size / 1024 / 1024
+    if size_mb > 50:
+        logger.warning(
+            f"scene_mesh.glb ist {size_mb:.1f} MB – überschreitet Supabase-Limit (50 MB). "
+            f"Upload wird trotzdem versucht, kann scheitern."
+        )
+
     try:
         with open(glb_path, "rb") as fh:
             storage.upload(
@@ -295,7 +354,7 @@ def _upload_mesh_glb(sb, device_id: str, viewer: Path) -> bool:
                 file=fh.read(),
                 file_options={"content-type": "model/gltf-binary", "upsert": "true"},
             )
-        logger.info(f"  ↑  {device_id}/scene_mesh.glb")
+        logger.info(f"  ↑  {device_id}/scene_mesh.glb ({size_mb:.1f} MB)")
 
         # Externe Textur-Sidecars mituploaden (scene_mesh_u0_v0_diffuse.png etc.)
         for png in sorted(viewer.glob("scene_mesh*.png")):
@@ -345,7 +404,7 @@ def process_scan(
         json.dumps(metadata, indent=2, ensure_ascii=False).encode()
     )
 
-    # ── PFAD A: DA3 (schnell, 6 Frames aus Tilt=90°-Reihe) ──────────────────────
+    # ── PFAD A: DA3 (schnell, 6 Frames aus Tilt=90°-Reihe) ────────────────────────
     logger.info("--- PFAD A: DA3 ---")
     da3_frames = _select_da3_frames(metadata)
     if len(da3_frames) < 4:
@@ -361,9 +420,10 @@ def process_scan(
         else:
             _set_scan_status(sb, device_id, "error")
 
-    # ── PFAD B: RealityScan (langsam, alle 27 Frames) ──────────────────────
+    # ── PFAD B: RealityScan (langsam, alle 27 Frames) ──────────────────
     logger.info("--- PFAD B: RealityScan ---")
     if _run_realityscan(workspace, viewer, realityscan_exe):
+        _compress_draco(viewer)  # optional; kein Fehler wenn gltf-transform fehlt
         if _upload_mesh_glb(sb, device_id, viewer):
             _set_mesh_status(sb, device_id, "complete")
         else:
@@ -390,6 +450,7 @@ def main() -> None:
     sb = create_client(supabase_url, supabase_key)
     logger.info(f"BirdGuard Watcher gestartet – Device {device_id}")
     logger.info(f"RealityScan: {realityscan_exe}")
+    logger.info(f"Draco-Komprimierung: {_GLTF_TRANSFORM_CMD}")
     logger.info(f"Polling alle {POLL_INTERVAL_S:.0f}s …")
 
     last_status: str | None = None
