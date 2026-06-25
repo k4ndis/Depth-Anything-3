@@ -179,9 +179,14 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     Fuehrt RealityScan 2.x (RealityCapture-Engine) auf allen 27 Frames aus.
     Ausgabe: viewer/scene_mesh.glb (texturiertes Mesh)
 
-    Hinweis: RealityCapture beendet sich haeufig mit Exit-Code != 0, auch wenn
+    Qualität: calculateNormalModel (statt High) – erzeugt deutlich kleinere
+    Dateien (~10-50 MB) die in Supabase Storage hochgeladen werden können.
+    calculateHighModel erzeugte ~500 MB, was das Supabase-Limit (50 MB) bei
+    weitem überschreitet.
+
+    Hinweis: RealityCapture beendet sich häufig mit Exit-Code != 0, auch wenn
     der Export erfolgreich war. Der Exit-Code wird daher ignoriert; stattdessen
-    wird geprueft ob scene_mesh.glb tatsaechlich existiert und Inhalt hat.
+    wird geprüft ob scene_mesh.glb tatsächlich existiert und Inhalt hat.
     """
     viewer.mkdir(parents=True, exist_ok=True)
     output_glb = viewer / "scene_mesh.glb"
@@ -195,7 +200,7 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         "-align",
         "-selectMaximalComponent",
         "-setReconstructionRegionAuto",
-        "-calculateHighModel",
+        "-calculateNormalModel",
         "-calculateTexture",
         "-renameSelectedModel",        "scene_mesh",
         "-exportModel",                "scene_mesh",  win_output,
@@ -206,10 +211,19 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         result = subprocess.run(cmd, timeout=3600)
         # RC exits non-zero even on success – trust the output file, not the exit code.
         if output_glb.exists() and output_glb.stat().st_size > 0:
+            size_mb = output_glb.stat().st_size / 1024 / 1024
             if result.returncode != 0:
                 logger.warning(
                     f"RealityScan exitcode={result.returncode} aber "
-                    f"scene_mesh.glb ({output_glb.stat().st_size // 1024} KB) vorhanden – OK"
+                    f"scene_mesh.glb ({size_mb:.1f} MB) vorhanden – OK"
+                )
+            else:
+                logger.info(f"scene_mesh.glb erzeugt: {size_mb:.1f} MB")
+            if size_mb > 50:
+                logger.warning(
+                    f"scene_mesh.glb ist {size_mb:.1f} MB – überschreitet Supabase-Limit "
+                    f"(50 MB). Upload könnte scheitern. "
+                    f"Limit erhöhen: Supabase Dashboard → Storage → Policies."
                 )
             return True
         logger.error(
