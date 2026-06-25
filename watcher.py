@@ -13,8 +13,12 @@ watcher.py – PC-seitiger DA3- und RealityScan-Watcher
   PFAD B – RealityScan 2.0 (langsam, 27 Frames):
     Alle 27 Frames → RealityScan CLI → scene_mesh.glb
     → Draco-Komprimierung (Geometrie)
-    → WebP q75 (Texturen, falls noch über 50 MB)
     → Supabase → mesh_status = "complete".
+
+    Hinweis zur Dateigröße: Nach Draco ist das GLB typischerweise 60-80 MB,
+    was das Supabase Free-Plan-Limit (50 MB) überschreitet. Upload wird trotzdem
+    versucht. Eine Lösung (Cloud-Storage, Textur-Resize, GPU-Komprimierung)
+    wird separat umgesetzt.
 
 Konfiguration über .env (oder Umgebungsvariablen):
     SUPABASE_URL        Projekt-URL (https://xxx.supabase.co)
@@ -64,7 +68,7 @@ POLL_INTERVAL_S = 10.0
 # 6 Pan-Positionen aus der Tilt=90°-Reihe, die DA3 erhält (Indices 0,2,3,5,6,8)
 _DA3_PAN_SUBSET = {10.0, 50.0, 70.0, 110.0, 130.0, 170.0}
 
-# gltf-transform CLI für Draco- und WebP-Komprimierung (npm install -g @gltf-transform/cli)
+# gltf-transform CLI für Draco-Komprimierung (npm install -g @gltf-transform/cli)
 _GLTF_TRANSFORM_CMD = os.environ.get("GLTF_TRANSFORM_CMD", "gltf-transform")
 
 # Supabase Free-Plan: 50 MB pro Datei (nicht konfigurierbar ohne Pro-Upgrade)
@@ -190,7 +194,7 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     Ausgabe: viewer/scene_mesh.glb (texturiertes Mesh)
 
     Qualität: calculateNormalModel (statt High) – erzeugt deutlich kleinere
-    Dateien (~10-50 MB) die in Supabase Storage hochgeladen werden können.
+    Dateien (~10-80 MB) die in Supabase Storage hochgeladen werden können.
     calculateHighModel erzeugte ~500 MB, was das Supabase-Limit (50 MB) bei
     weitem überschreitet.
 
@@ -248,8 +252,8 @@ def _compress_draco(viewer: Path) -> bool:
 
     Draco kodiert Mesh-Geometrie effizienter ohne Qualitätsverlust.
     Typische Reduktion der Geometrie-Daten: 85-90%.
-    Texturen bleiben unkomprimiert – bei texturierten Meshes reicht Draco
-    allein oft nicht aus; dann folgt _compress_textures_webp().
+    Texturen bleiben unkomprimiert – nach Draco ist das GLB typischerweise
+    60-80 MB (je nach Texturanzahl und -auflösung).
 
     Benötigt gltf-transform CLI:
         npm install -g @gltf-transform/cli
@@ -284,53 +288,6 @@ def _compress_draco(viewer: Path) -> bool:
         return False
     except subprocess.TimeoutExpired:
         logger.error("Draco-Komprimierung: Timeout (>5 min)")
-        return False
-
-
-def _compress_textures_webp(viewer: Path) -> bool:
-    """
-    Komprimiert eingebettete Texturen in scene_mesh.glb zu lossy WebP (quality 75).
-
-    Draco komprimiert nur Geometrie. RealityScan bettet Texturen als JPEG ein;
-    dieser Schritt re-kodiert sie als lossy WebP (q75), was bei Fotos 30-50%
-    kleiner als JPEG bei gleicher visueller Qualität ist.
-
-    WICHTIG: Kein lossless WebP verwenden (Standard von gltf-transform) –
-    lossless WebP ist bei JPEG-Quellmaterial deutlich größer als JPEG.
-
-    Erwartetes Ergebnis nach Draco + WebP q75: ~20-30 MB (von 150 MB Ausgangsgröße).
-    """
-    input_glb  = viewer / "scene_mesh.glb"
-    output_glb = viewer / "scene_mesh_webp.glb"
-    if not input_glb.exists():
-        return False
-    try:
-        result = subprocess.run(
-            [
-                _GLTF_TRANSFORM_CMD, "webp",
-                "--quality", "75",
-                str(input_glb), str(output_glb),
-            ],
-            capture_output=True, text=True, timeout=300,
-        )
-        if result.returncode == 0 and output_glb.exists() and output_glb.stat().st_size > 0:
-            mb_before = input_glb.stat().st_size  / 1024 / 1024
-            mb_after  = output_glb.stat().st_size / 1024 / 1024
-            reduction = (1 - mb_after / mb_before) * 100
-            logger.info(f"WebP q75: {mb_before:.1f} MB → {mb_after:.1f} MB ({reduction:.0f}% kleiner)")
-            input_glb.unlink()
-            output_glb.rename(input_glb)
-            return True
-        logger.warning(
-            f"WebP-Komprimierung fehlgeschlagen (exitcode={result.returncode}): "
-            f"{result.stderr.strip()}"
-        )
-        return False
-    except FileNotFoundError:
-        logger.warning("gltf-transform nicht gefunden – WebP-Komprimierung übersprungen.")
-        return False
-    except subprocess.TimeoutExpired:
-        logger.error("WebP-Komprimierung: Timeout (>5 min)")
         return False
 
 
@@ -448,7 +405,7 @@ def process_scan(
         json.dumps(metadata, indent=2, ensure_ascii=False).encode()
     )
 
-    # ── PFAD A: DA3 (schnell, 6 Frames aus Tilt=90°-Reihe) ──────────────────
+    # ── PFAD A: DA3 (schnell, 6 Frames aus Tilt=90°-Reihe) ──────────────────────────────────────
     logger.info("--- PFAD A: DA3 ---")
     da3_frames = _select_da3_frames(metadata)
     if len(da3_frames) < 4:
@@ -464,17 +421,10 @@ def process_scan(
         else:
             _set_scan_status(sb, device_id, "error")
 
-    # ── PFAD B: RealityScan (langsam, alle 27 Frames) ──────────────────
+    # ── PFAD B: RealityScan (langsam, alle 27 Frames) ───────────────────
     logger.info("--- PFAD B: RealityScan ---")
     if _run_realityscan(workspace, viewer, realityscan_exe):
         _compress_draco(viewer)
-        _glb = viewer / "scene_mesh.glb"
-        if _glb.exists() and _glb.stat().st_size / 1024 / 1024 > _SUPABASE_MAX_MB:
-            logger.info(
-                f"Nach Draco noch über {_SUPABASE_MAX_MB:.0f} MB – "
-                f"WebP-Texturkomprimierung (lossy q75) ..."
-            )
-            _compress_textures_webp(viewer)
         if _upload_mesh_glb(sb, device_id, viewer):
             _set_mesh_status(sb, device_id, "complete")
         else:
@@ -501,7 +451,7 @@ def main() -> None:
     sb = create_client(supabase_url, supabase_key)
     logger.info(f"BirdGuard Watcher gestartet – Device {device_id}")
     logger.info(f"RealityScan: {realityscan_exe}")
-    logger.info(f"Draco + WebP q75 Komprimierung: {_GLTF_TRANSFORM_CMD}")
+    logger.info(f"Draco-Komprimierung: {_GLTF_TRANSFORM_CMD}")
     logger.info(f"Polling alle {POLL_INTERVAL_S:.0f}s …")
 
     last_status: str | None = None
