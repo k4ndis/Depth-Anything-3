@@ -12,7 +12,8 @@ watcher.py – PC-seitiger DA3- und RealityScan-Watcher
 
   PFAD B – RealityScan 2.0 (langsam, 27 Frames):
     Alle 27 Frames → RealityScan CLI → scene_mesh.glb
-    → Draco-Komprimierung (optional) → Supabase → mesh_status = "complete".
+    → Draco-Komprimierung (Geometrie) → WebP-Komprimierung (Texturen, falls nötig)
+    → Supabase → mesh_status = "complete".
 
 Konfiguration über .env (oder Umgebungsvariablen):
     SUPABASE_URL        Projekt-URL (https://xxx.supabase.co)
@@ -62,8 +63,11 @@ POLL_INTERVAL_S = 10.0
 # 6 Pan-Positionen aus der Tilt=90°-Reihe, die DA3 erhält (Indices 0,2,3,5,6,8)
 _DA3_PAN_SUBSET = {10.0, 50.0, 70.0, 110.0, 130.0, 170.0}
 
-# gltf-transform CLI für Draco-Komprimierung (npm install -g @gltf-transform/cli)
+# gltf-transform CLI für Draco- und WebP-Komprimierung (npm install -g @gltf-transform/cli)
 _GLTF_TRANSFORM_CMD = os.environ.get("GLTF_TRANSFORM_CMD", "gltf-transform")
+
+# Supabase Free-Plan: 50 MB pro Datei (nicht konfigurierbar ohne Pro-Upgrade)
+_SUPABASE_MAX_MB = 50.0
 
 
 def _require_env(key: str) -> str:
@@ -224,11 +228,6 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
                 )
             else:
                 logger.info(f"scene_mesh.glb erzeugt: {size_mb:.1f} MB")
-            if size_mb > 50:
-                logger.warning(
-                    f"scene_mesh.glb ist {size_mb:.1f} MB – überschreitet Supabase-Limit "
-                    f"(50 MB). Draco-Komprimierung wird versucht ..."
-                )
             return True
         logger.error(
             f"RealityScan: scene_mesh.glb nicht erzeugt (exitcode={result.returncode})"
@@ -247,15 +246,12 @@ def _compress_draco(viewer: Path) -> bool:
     Komprimiert scene_mesh.glb mit Draco-Geometrie-Komprimierung (verlustfrei).
 
     Draco kodiert Mesh-Geometrie effizienter ohne Qualitätsverlust.
-    Typische Reduktion: 85-90% – 148 MB → ~15-22 MB.
+    Typische Reduktion der Geometrie-Daten: 85-90%.
+    Texturen bleiben unkomprimiert – bei texturierten Meshes reicht Draco
+    allein oft nicht aus; dann folgt _compress_textures_webp().
 
     Benötigt gltf-transform CLI:
         npm install -g @gltf-transform/cli
-    Pfad überschreiben: Umgebungsvariable GLTF_TRANSFORM_CMD setzen.
-
-    Gibt True bei Erfolg zurück. Wenn gltf-transform nicht installiert ist,
-    wird False zurückgegeben und der Upload mit der unkomprimierten Datei
-    fortgesetzt.
     """
     input_glb  = viewer / "scene_mesh.glb"
     output_glb = viewer / "scene_mesh_draco.glb"
@@ -287,6 +283,48 @@ def _compress_draco(viewer: Path) -> bool:
         return False
     except subprocess.TimeoutExpired:
         logger.error("Draco-Komprimierung: Timeout (>5 min)")
+        return False
+
+
+def _compress_textures_webp(viewer: Path) -> bool:
+    """
+    Komprimiert Texturen in scene_mesh.glb zu WebP (ca. 70-80% kleiner als PNG/JPEG).
+
+    Draco komprimiert nur Geometrie. Bei texturierten RealityScan-Meshes machen
+    Texturen oft 60-70% der Dateigröße aus. Dieser Schritt wird aufgerufen wenn
+    das GLB nach Draco noch über _SUPABASE_MAX_MB liegt.
+
+    Erwartetes Ergebnis nach Draco + WebP: ~15-25 MB (von 150 MB Ausgangsgröße).
+
+    Benötigt gltf-transform >= 4.x (npm install -g @gltf-transform/cli).
+    """
+    input_glb  = viewer / "scene_mesh.glb"
+    output_glb = viewer / "scene_mesh_webp.glb"
+    if not input_glb.exists():
+        return False
+    try:
+        result = subprocess.run(
+            [_GLTF_TRANSFORM_CMD, "webp", str(input_glb), str(output_glb)],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode == 0 and output_glb.exists() and output_glb.stat().st_size > 0:
+            mb_before = input_glb.stat().st_size  / 1024 / 1024
+            mb_after  = output_glb.stat().st_size / 1024 / 1024
+            reduction = (1 - mb_after / mb_before) * 100
+            logger.info(f"WebP: {mb_before:.1f} MB → {mb_after:.1f} MB ({reduction:.0f}% kleiner)")
+            input_glb.unlink()
+            output_glb.rename(input_glb)
+            return True
+        logger.warning(
+            f"WebP-Komprimierung fehlgeschlagen (exitcode={result.returncode}): "
+            f"{result.stderr.strip()}"
+        )
+        return False
+    except FileNotFoundError:
+        logger.warning("gltf-transform nicht gefunden – WebP-Komprimierung übersprungen.")
+        return False
+    except subprocess.TimeoutExpired:
+        logger.error("WebP-Komprimierung: Timeout (>5 min)")
         return False
 
 
@@ -341,10 +379,10 @@ def _upload_mesh_glb(sb, device_id: str, viewer: Path) -> bool:
         return False
 
     size_mb = glb_path.stat().st_size / 1024 / 1024
-    if size_mb > 50:
+    if size_mb > _SUPABASE_MAX_MB:
         logger.warning(
-            f"scene_mesh.glb ist {size_mb:.1f} MB – überschreitet Supabase-Limit (50 MB). "
-            f"Upload wird trotzdem versucht, kann scheitern."
+            f"scene_mesh.glb ist {size_mb:.1f} MB – überschreitet Supabase-Limit "
+            f"({_SUPABASE_MAX_MB:.0f} MB). Upload wird trotzdem versucht, kann scheitern."
         )
 
     try:
@@ -404,7 +442,7 @@ def process_scan(
         json.dumps(metadata, indent=2, ensure_ascii=False).encode()
     )
 
-    # ── PFAD A: DA3 (schnell, 6 Frames aus Tilt=90°-Reihe) ────────────────────────
+    # ── PFAD A: DA3 (schnell, 6 Frames aus Tilt=90°-Reihe) ──────────────────
     logger.info("--- PFAD A: DA3 ---")
     da3_frames = _select_da3_frames(metadata)
     if len(da3_frames) < 4:
@@ -423,7 +461,14 @@ def process_scan(
     # ── PFAD B: RealityScan (langsam, alle 27 Frames) ──────────────────
     logger.info("--- PFAD B: RealityScan ---")
     if _run_realityscan(workspace, viewer, realityscan_exe):
-        _compress_draco(viewer)  # optional; kein Fehler wenn gltf-transform fehlt
+        _compress_draco(viewer)
+        _glb = viewer / "scene_mesh.glb"
+        if _glb.exists() and _glb.stat().st_size / 1024 / 1024 > _SUPABASE_MAX_MB:
+            logger.info(
+                f"Nach Draco noch über {_SUPABASE_MAX_MB:.0f} MB – "
+                f"WebP-Texturkomprimierung ..."
+            )
+            _compress_textures_webp(viewer)
         if _upload_mesh_glb(sb, device_id, viewer):
             _set_mesh_status(sb, device_id, "complete")
         else:
@@ -450,7 +495,7 @@ def main() -> None:
     sb = create_client(supabase_url, supabase_key)
     logger.info(f"BirdGuard Watcher gestartet – Device {device_id}")
     logger.info(f"RealityScan: {realityscan_exe}")
-    logger.info(f"Draco-Komprimierung: {_GLTF_TRANSFORM_CMD}")
+    logger.info(f"Draco + WebP-Komprimierung: {_GLTF_TRANSFORM_CMD}")
     logger.info(f"Polling alle {POLL_INTERVAL_S:.0f}s …")
 
     last_status: str | None = None
