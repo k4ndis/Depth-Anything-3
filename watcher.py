@@ -41,6 +41,7 @@ Starten (aus ~/Depth-Anything-3):
 
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -124,6 +125,111 @@ def _select_da3_frames(metadata: dict) -> list[dict]:
     return selected
 
 
+def _quat_rotate_minus_z(qw: float, qx: float, qy: float, qz: float) -> tuple[float, float, float]:
+    """Rotate (0,0,-1) by unit quaternion q → camera forward (OpenGL -Z convention)."""
+    vx, vy, vz = 0.0, 0.0, -1.0
+    tx = 2 * (qy * vz - qz * vy)
+    ty = 2 * (qz * vx - qx * vz)
+    tz = 2 * (qx * vy - qy * vx)
+    return (
+        vx + qw * tx + qy * tz - qz * ty,
+        vy + qw * ty + qz * tx - qx * tz,
+        vz + qw * tz + qx * ty - qy * tx,
+    )
+
+
+def _opk_to_fwd_rc(omega_deg: float, phi_deg: float, kappa_deg: float) -> tuple[float, float, float]:
+    """OPK Euler angles → forward vector in RC's native Z-up world space.
+    Uses R = Rz(K) @ Ry(P) @ Rx(O); forward = R @ (0, 0, 1) (photogrammetry +Z)."""
+    o = math.radians(omega_deg)
+    p = math.radians(phi_deg)
+    k = math.radians(kappa_deg)
+    co, so = math.cos(o), math.sin(o)
+    cp, sp = math.cos(p), math.sin(p)
+    ck, sk = math.cos(k), math.sin(k)
+    return (ck * sp * co + sk * so,
+            sk * sp * co - ck * so,
+            cp * co)
+
+
+def _parse_mesh_cameras_txt(cameras_txt: Path) -> list[dict] | None:
+    """
+    Parst den RealityCapture-Kamera-Export (TXT).
+
+    Unterstützte Formate (Leerzeichen oder Komma getrennt):
+      OPK:        name x y z omega phi kappa
+      Quaternion: name x y z qw qx qy qz
+      Rotation:   name x y z r11 r12 r13 r21 r22 r23 r31 r32 r33 …
+
+    Gibt [{filename, fwd_x, fwd_y, fwd_z}] in Three.js Y-up-Raum zurück.
+    """
+    if not cameras_txt.exists():
+        logger.warning(f"Kamera-Export nicht gefunden: {cameras_txt}")
+        return None
+
+    cameras = []
+    with open(cameras_txt, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.replace(",", " ").split()
+            if len(parts) < 7:
+                continue
+            name = parts[0]
+            try:
+                nums = [float(p) for p in parts[1:]]
+            except ValueError:
+                continue
+            if len(nums) < 6:
+                continue
+
+            if len(nums) >= 12:
+                # Rotation-matrix format: name x y z r11 r12 r13 r21 r22 r23 r31 r32 r33 …
+                # forward = R @ (0, 0, -1)  →  -r13, -r23, -r33
+                fx_rc = -nums[5]
+                fy_rc = -nums[8]
+                fz_rc = -nums[11]
+            elif len(nums) >= 7:
+                qw, qx, qy, qz = nums[3], nums[4], nums[5], nums[6]
+                if abs(qw**2 + qx**2 + qy**2 + qz**2 - 1.0) < 0.05:
+                    # Quaternion format
+                    fx_rc, fy_rc, fz_rc = _quat_rotate_minus_z(qw, qx, qy, qz)
+                else:
+                    # OPK with extra columns
+                    fx_rc, fy_rc, fz_rc = _opk_to_fwd_rc(nums[3], nums[4], nums[5])
+            else:
+                # OPK format: name x y z omega phi kappa
+                fx_rc, fy_rc, fz_rc = _opk_to_fwd_rc(nums[3], nums[4], nums[5])
+
+            # RC Z-up → Three.js Y-up: (X, Y, Z)_rc → (X, Z, -Y)_yup
+            cameras.append({
+                "filename": name,
+                "fwd_x":    round(fx_rc,  6),
+                "fwd_y":    round(fz_rc,  6),
+                "fwd_z":    round(-fy_rc, 6),
+            })
+
+    if not cameras:
+        logger.warning("Keine gültigen Kamera-Einträge in der Exportdatei gefunden")
+        return None
+
+    logger.info(f"Kamera-Export: {len(cameras)} Kameras geparst aus {cameras_txt.name}")
+    return cameras
+
+
+def _write_mesh_cameras_json(cameras: list[dict], viewer: Path) -> Path:
+    """Schreibt mesh_cameras.json in das viewer-Verzeichnis."""
+    out = viewer / "mesh_cameras.json"
+    out.write_text(
+        json.dumps({"camera_count": len(cameras), "cameras": cameras},
+                   indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    logger.info(f"mesh_cameras.json geschrieben ({len(cameras)} Kameras)")
+    return out
+
+
 def _prepare_da3_input(workspace: Path, da3_frames: list[dict]) -> Path:
     """Kopiert die 6 DA3-Frames in workspace/da3_input/ und schreibt Sub-Metadata."""
     da3_dir = workspace.parent / "da3_input"
@@ -203,10 +309,12 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     wird geprüft ob scene_mesh.glb tatsächlich existiert und Inhalt hat.
     """
     viewer.mkdir(parents=True, exist_ok=True)
-    output_glb = viewer / "scene_mesh.glb"
+    output_glb   = viewer / "scene_mesh.glb"
+    cameras_txt  = viewer / "mesh_cameras.txt"
 
-    win_input  = _to_win_path(workspace)
-    win_output = _to_win_path(output_glb)
+    win_input    = _to_win_path(workspace)
+    win_output   = _to_win_path(output_glb)
+    win_cameras  = _to_win_path(cameras_txt)
 
     cmd = [
         realityscan_exe,
@@ -218,6 +326,7 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         "-calculateTexture",
         "-renameSelectedModel",        "scene_mesh",
         "-exportModel",                "scene_mesh",  win_output,
+        "-exportCamerasAsTxt",         win_cameras,
         "-quit",
     ]
     logger.info(f"RealityScan-Befehl: {' '.join(cmd)}")
@@ -367,6 +476,17 @@ def _upload_mesh_glb(sb, device_id: str, viewer: Path) -> bool:
                 )
             logger.info(f"  ↑  {device_id}/{png.name}")
 
+        # Kamera-Posen für automatische Cloud↔Mesh-Ausrichtung im Viewer
+        cam_json = viewer / "mesh_cameras.json"
+        if cam_json.exists():
+            with open(cam_json, "rb") as fh:
+                storage.upload(
+                    path=f"{device_id}/mesh_cameras.json",
+                    file=fh.read(),
+                    file_options={"content-type": "application/json", "upsert": "true"},
+                )
+            logger.info(f"  ↑  {device_id}/mesh_cameras.json")
+
         return True
     except Exception as exc:
         logger.error(f"Upload scene_mesh.glb fehlgeschlagen: {exc}", exc_info=True)
@@ -424,6 +544,10 @@ def process_scan(
     # ── PFAD B: RealityScan (langsam, alle 27 Frames) ───────────────────
     logger.info("--- PFAD B: RealityScan ---")
     if _run_realityscan(workspace, viewer, realityscan_exe):
+        # Kamera-Export parsen und als JSON schreiben (für Auto-Ausrichtung im Viewer)
+        cameras = _parse_mesh_cameras_txt(viewer / "mesh_cameras.txt")
+        if cameras:
+            _write_mesh_cameras_json(cameras, viewer)
         _compress_draco(viewer)
         if _upload_mesh_glb(sb, device_id, viewer):
             _set_mesh_status(sb, device_id, "complete")
