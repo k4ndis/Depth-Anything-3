@@ -400,16 +400,6 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     win_input    = _to_win_path(workspace)
     win_output   = _to_win_path(output_glb)
 
-    # COLMAP -exportRegistration needs a *directory* (it creates images.txt,
-    # cameras.txt, points3D.txt inside).  Use a subdirectory of viewer so the
-    # same UNC path that works for -exportModel also works here.
-    cameras_export_dir = viewer / "rc_cameras"
-    if cameras_export_dir.exists():
-        shutil.rmtree(cameras_export_dir, ignore_errors=True)
-    cameras_export_dir.mkdir(parents=True, exist_ok=True)
-    win_cameras = _to_win_path(cameras_export_dir)
-    logger.info(f"Kamera-Export-Verzeichnis: {win_cameras}")
-
     cmd = [
         realityscan_exe,
         "-addFolder",                  win_input,
@@ -423,7 +413,10 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         "-calculateTexture",
         "-renameSelectedModel",        "scene_mesh",
         "-exportModel",                "scene_mesh",  win_output,
-        "-exportRegistration",         win_cameras,
+        # NOTE: -exportRegistration aborts the entire batch in RealityScan (err:5618)
+        # regardless of path (WSL UNC, C:\Windows\Temp, C:\Users\Public all fail).
+        # Camera-pose auto-alignment is skipped for now; user can use the Y-rotation
+        # slider in room-viewer.html for manual alignment.
         "-quit",
     ]
     logger.info(f"RealityScan-Befehl: {' '.join(cmd)}")
@@ -439,10 +432,6 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
                 )
             else:
                 logger.info(f"scene_mesh.glb erzeugt: {size_mb:.1f} MB")
-            # Find the camera registration file RC wrote into the export directory.
-            # COLMAP layout: images.txt (primary), cameras.txt, points3D.txt.
-            # Other formats may write a single .txt or .csv directly.
-            _copy_camera_export(cameras_export_dir, cameras_txt)
             return True
         logger.error(
             f"RealityScan: scene_mesh.glb nicht erzeugt (exitcode={result.returncode})"
