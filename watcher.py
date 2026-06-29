@@ -310,11 +310,15 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     """
     viewer.mkdir(parents=True, exist_ok=True)
     output_glb   = viewer / "scene_mesh.glb"
-    cameras_txt  = viewer / "mesh_cameras.txt"
+    # RC exports registration as CSV; format is determined by the last format
+    # selected in the RC GUI → one-time setup: choose
+    # "Comma-separated, Image, X/Lon, Y/Lat, Z/Alt, Omega, Phi, Kappa"
+    # in Export → Registration once, then CLI picks it up automatically.
+    cameras_csv  = viewer / "mesh_cameras.csv"
 
     win_input    = _to_win_path(workspace)
     win_output   = _to_win_path(output_glb)
-    win_cameras  = _to_win_path(cameras_txt)
+    win_cameras  = _to_win_path(cameras_csv)
 
     cmd = [
         realityscan_exe,
@@ -329,9 +333,7 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         "-calculateTexture",
         "-renameSelectedModel",        "scene_mesh",
         "-exportModel",                "scene_mesh",  win_output,
-        # NOTE: -exportCamerasAsTxt does not exist in RealityScan 2.1 (err:7180).
-        # Until the correct RC camera-export CLI flag is found, auto mesh-to-cloud
-        # alignment is disabled; use the mesh Y-rotation slider in the viewer.
+        "-exportRegistration",         win_cameras,
         "-quit",
     ]
     logger.info(f"RealityScan-Befehl: {' '.join(cmd)}")
@@ -550,7 +552,7 @@ def process_scan(
     logger.info("--- PFAD B: RealityScan ---")
     if _run_realityscan(workspace, viewer, realityscan_exe):
         # Kamera-Export parsen und als JSON schreiben (für Auto-Ausrichtung im Viewer)
-        cameras = _parse_mesh_cameras_txt(viewer / "mesh_cameras.txt")
+        cameras = _parse_mesh_cameras_txt(viewer / "mesh_cameras.csv")
         if cameras:
             _write_mesh_cameras_json(cameras, viewer)
         _compress_draco(viewer)
