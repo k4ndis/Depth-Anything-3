@@ -154,14 +154,25 @@ def _opk_to_fwd_rc(omega_deg: float, phi_deg: float, kappa_deg: float) -> tuple[
 
 def _parse_mesh_cameras_txt(cameras_txt: Path) -> list[dict] | None:
     """
-    Parst den RealityCapture-Kamera-Export (TXT).
+    Parst den RealityCapture-Kamera-Export.
 
-    Unterstützte Formate (Leerzeichen oder Komma getrennt):
-      OPK:        name x y z omega phi kappa
-      Quaternion: name x y z qw qx qy qz
-      Rotation:   name x y z r11 r12 r13 r21 r22 r23 r31 r32 r33 …
+    Unterstützte Formate:
 
-    Gibt [{filename, fwd_x, fwd_y, fwd_z}] in Three.js Y-up-Raum zurück.
+    COLMAP images.txt (bevorzugt – kein GPS nötig, in RC-GUI als Default wählen):
+        IMAGE_ID  QW  QX  QY  QZ  TX  TY  TZ  CAMERA_ID  NAME
+        Erkennung: Name steht am Ende, Quaternion an Pos 1-4.
+        Konvention: q ist World→Camera, Kamera schaut +Z → forward = q⁻¹·(0,0,1)
+
+    OPK CSV (nur bei geo-referenzierter Szene verfügbar):
+        name, x, y, z, omega, phi, kappa
+
+    Quaternion (name zuerst):
+        name  x  y  z  qw  qx  qy  qz
+
+    Rotationsmatrix (name zuerst):
+        name  x  y  z  r11 r12 r13  r21 r22 r23  r31 r32 r33 …
+
+    Rückgabe: [{filename, fwd_x, fwd_y, fwd_z}] in Three.js Y-up-Raum.
     """
     if not cameras_txt.exists():
         logger.warning(f"Kamera-Export nicht gefunden: {cameras_txt}")
@@ -176,33 +187,61 @@ def _parse_mesh_cameras_txt(cameras_txt: Path) -> list[dict] | None:
             parts = line.replace(",", " ").split()
             if len(parts) < 7:
                 continue
-            name = parts[0]
+
+            # ── COLMAP format detection ─────────────────────────────────────
+            # In COLMAP images.txt the filename is the LAST token.
+            # All preceding tokens are numeric (IMAGE_ID + 7 floats + CAMERA_ID).
+            colmap = False
             try:
-                nums = [float(p) for p in parts[1:]]
+                float(parts[-1])   # last token numeric → not COLMAP (no filename at end)
             except ValueError:
-                continue
-            if len(nums) < 6:
-                continue
+                # Last token is non-numeric → filename at end → likely COLMAP
+                if len(parts) >= 10:
+                    try:
+                        _id = int(parts[0])   # IMAGE_ID must be integer
+                        qw  = float(parts[1])
+                        qx  = float(parts[2])
+                        qy  = float(parts[3])
+                        qz  = float(parts[4])
+                        # Verify unit quaternion
+                        if abs(qw**2 + qx**2 + qy**2 + qz**2 - 1.0) < 0.1:
+                            colmap = True
+                    except (ValueError, IndexError):
+                        pass
 
-            if len(nums) >= 12:
-                # Rotation-matrix format: name x y z r11 r12 r13 r21 r22 r23 r31 r32 r33 …
-                # forward = R @ (0, 0, -1)  →  -r13, -r23, -r33
-                fx_rc = -nums[5]
-                fy_rc = -nums[8]
-                fz_rc = -nums[11]
-            elif len(nums) >= 7:
-                qw, qx, qy, qz = nums[3], nums[4], nums[5], nums[6]
-                if abs(qw**2 + qx**2 + qy**2 + qz**2 - 1.0) < 0.05:
-                    # Quaternion format
-                    fx_rc, fy_rc, fz_rc = _quat_rotate_minus_z(qw, qx, qy, qz)
-                else:
-                    # OPK with extra columns
-                    fx_rc, fy_rc, fz_rc = _opk_to_fwd_rc(nums[3], nums[4], nums[5])
+            if colmap:
+                name = parts[-1]
+                # q is world→camera, camera looks along +Z in camera space.
+                # forward_world = q⁻¹ · (0,0,1) = –(q⁻¹ · (0,0,–1))
+                #               = –_quat_rotate_minus_z(qw, –qx, –qy, –qz)
+                r = _quat_rotate_minus_z(qw, -qx, -qy, -qz)
+                fx_rc, fy_rc, fz_rc = -r[0], -r[1], -r[2]
             else:
-                # OPK format: name x y z omega phi kappa
-                fx_rc, fy_rc, fz_rc = _opk_to_fwd_rc(nums[3], nums[4], nums[5])
+                # ── Name-first formats ───────────────────────────────────────
+                name = parts[0]
+                try:
+                    nums = [float(p) for p in parts[1:]]
+                except ValueError:
+                    continue
+                if len(nums) < 6:
+                    continue
 
-            # RC Z-up → Three.js Y-up: (X, Y, Z)_rc → (X, Z, -Y)_yup
+                if len(nums) >= 12:
+                    # Rotation-matrix: name x y z r11 r12 r13 r21 r22 r23 r31 r32 r33 …
+                    # R maps world→camera; forward_world = –R^T[:,2] = –(r31,r32,r33)
+                    fx_rc, fy_rc, fz_rc = -nums[9], -nums[10], -nums[11]
+                elif len(nums) >= 7:
+                    qw2, qx2, qy2, qz2 = nums[3], nums[4], nums[5], nums[6]
+                    if abs(qw2**2 + qx2**2 + qy2**2 + qz2**2 - 1.0) < 0.05:
+                        # Quaternion (camera→world), camera looks –Z
+                        fx_rc, fy_rc, fz_rc = _quat_rotate_minus_z(qw2, qx2, qy2, qz2)
+                    else:
+                        fx_rc, fy_rc, fz_rc = _opk_to_fwd_rc(nums[3], nums[4], nums[5])
+                else:
+                    # OPK: name x y z omega phi kappa
+                    fx_rc, fy_rc, fz_rc = _opk_to_fwd_rc(nums[3], nums[4], nums[5])
+
+            # RC Z-up → Three.js Y-up: (X, Y, Z)_rc → (X, Z, –Y)_yup
             cameras.append({
                 "filename": name,
                 "fwd_x":    round(fx_rc,  6),
@@ -310,15 +349,14 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     """
     viewer.mkdir(parents=True, exist_ok=True)
     output_glb   = viewer / "scene_mesh.glb"
-    # RC exports registration as CSV; format is determined by the last format
-    # selected in the RC GUI → one-time setup: choose
-    # "Comma-separated, Image, X/Lon, Y/Lat, Z/Alt, Omega, Phi, Kappa"
-    # in Export → Registration once, then CLI picks it up automatically.
-    cameras_csv  = viewer / "mesh_cameras.csv"
+    # RC exports registration in the format last selected in the GUI.
+    # One-time setup: choose "COLMAP" in Export → Registration once.
+    # Parser auto-detects COLMAP / OPK / quaternion / rotation-matrix.
+    cameras_txt  = viewer / "mesh_cameras.txt"
 
     win_input    = _to_win_path(workspace)
     win_output   = _to_win_path(output_glb)
-    win_cameras  = _to_win_path(cameras_csv)
+    win_cameras  = _to_win_path(cameras_txt)
 
     cmd = [
         realityscan_exe,
@@ -552,7 +590,7 @@ def process_scan(
     logger.info("--- PFAD B: RealityScan ---")
     if _run_realityscan(workspace, viewer, realityscan_exe):
         # Kamera-Export parsen und als JSON schreiben (für Auto-Ausrichtung im Viewer)
-        cameras = _parse_mesh_cameras_txt(viewer / "mesh_cameras.csv")
+        cameras = _parse_mesh_cameras_txt(viewer / "mesh_cameras.txt")
         if cameras:
             _write_mesh_cameras_json(cameras, viewer)
         _compress_draco(viewer)
