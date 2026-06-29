@@ -378,6 +378,59 @@ def _copy_camera_export(export_root: Path, dest: Path) -> bool:
     return False
 
 
+def _collect_xmp_cameras(workspace: Path, dest: Path) -> bool:
+    """
+    Reads RC XMP sidecar files written by -exportXMPForSelectedComponent and
+    converts them to viewer/mesh_cameras.txt (same COLMAP-style format our
+    parser already understands).
+
+    RC XMP rotation matrix (xcr:Rotation, 9 floats, row-major, camera→world).
+    Camera looks along +Z in camera space → forward_world = third column of R
+    = (R[2], R[5], R[8]).  Still in RC Z-up space; _parse_mesh_cameras_txt
+    converts to Three.js Y-up when it reads the file.
+
+    We write a minimal name-first rotation-matrix format:
+        <name>  0 0 0  R[0] R[1] R[2]  R[3] R[4] R[5]  R[6] R[7] R[8]
+    which the existing rotation-matrix branch of _parse_mesh_cameras_txt handles.
+    """
+    import xml.etree.ElementTree as ET
+    xmp_files = list(workspace.glob("*.xmp")) + list(workspace.glob("*.XMP"))
+    if not xmp_files:
+        logger.warning("Keine XMP-Dateien in workspace gefunden – auto-alignment nicht möglich")
+        return False
+
+    lines = []
+    for xf in sorted(xmp_files):
+        try:
+            tree = ET.parse(xf)
+            root = tree.getroot()
+            # Find xcr:Rotation text anywhere in the tree
+            rot_text = None
+            pos_text = None
+            for elem in root.iter():
+                tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+                if tag == "Rotation" and elem.text:
+                    rot_text = elem.text.strip()
+                # xcr:Position gives camera origin — not needed for forward vector
+            if rot_text is None:
+                continue
+            rot = [float(v) for v in rot_text.split()]
+            if len(rot) != 9:
+                continue
+            name = xf.stem + ".jpg"   # frame_0001.xmp → frame_0001.jpg
+            lines.append(f"{name} 0 0 0 " + " ".join(f"{v:.8f}" for v in rot))
+        except Exception as exc:
+            logger.warning(f"XMP parse error {xf.name}: {exc}")
+
+    if not lines:
+        logger.warning("Keine gültigen Kamera-Posen in XMP-Dateien – auto-alignment nicht möglich")
+        return False
+
+    dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    logger.info(f"XMP-Kameras: {len(lines)} Einträge → {dest.name}")
+    return True
+
+
 def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> bool:
     """
     Fuehrt RealityScan 2.x (RealityCapture-Engine) auf allen 27 Frames aus.
@@ -393,24 +446,11 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     wird geprüft ob scene_mesh.glb tatsächlich existiert und Inhalt hat.
     """
     viewer.mkdir(parents=True, exist_ok=True)
-    output_glb        = viewer / "scene_mesh.glb"
-    cameras_txt       = viewer / "mesh_cameras.txt"
+    output_glb  = viewer / "scene_mesh.glb"
+    cameras_txt = viewer / "mesh_cameras.txt"
 
-    # -exportRegistration needs a Windows-native path; WSL UNC paths fail (err:5618).
-    # RC creates the full COLMAP structure itself:
-    #   {root}/sparse/0/images.txt   ← camera poses
-    #   {root}/sparse/0/cameras.txt
-    #   {root}/sparse/0/points3D.txt
-    #   {root}/images/               ← empty
-    # C:\Users\Public\neptun_colmap is world-writable on every Windows install.
-    colmap_root_linux = Path("/mnt/c/Users/Public/neptun_colmap")
-    win_cameras       = "C:\\Users\\Public\\neptun_colmap"
-    # Clean up any leftover from a previous run so RC can create it fresh
-    if colmap_root_linux.exists():
-        shutil.rmtree(colmap_root_linux, ignore_errors=True)
-
-    win_input    = _to_win_path(workspace)
-    win_output   = _to_win_path(output_glb)
+    win_input  = _to_win_path(workspace)
+    win_output = _to_win_path(output_glb)
 
     cmd = [
         realityscan_exe,
@@ -425,10 +465,11 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         "-calculateTexture",
         "-renameSelectedModel",        "scene_mesh",
         "-exportModel",                "scene_mesh",  win_output,
-        # Uses the format last selected in RC GUI (Export Registration dialog).
-        # One-time setup: open RC GUI → Alignment → Export Registration → COLMAP → OK.
-        # RC remembers this setting between sessions.
-        "-exportRegistration",         win_cameras,
+        # exportXMPForSelectedComponent writes .xmp sidecar files next to the
+        # input images (workspace directory) — no path issues, no params.xml needed.
+        # -exportRegistration always aborts (err:5618) without a params.xml that
+        # must be hand-exported from the RC GUI Export Registration dialog.
+        "-exportXMPForSelectedComponent",
         "-quit",
     ]
     logger.info(f"RealityScan-Befehl: {' '.join(cmd)}")
@@ -444,7 +485,7 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
                 )
             else:
                 logger.info(f"scene_mesh.glb erzeugt: {size_mb:.1f} MB")
-            _copy_camera_export(colmap_root_linux, cameras_txt)
+            _collect_xmp_cameras(workspace, cameras_txt)
             return True
         logger.error(
             f"RealityScan: scene_mesh.glb nicht erzeugt (exitcode={result.returncode})"
