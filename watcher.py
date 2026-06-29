@@ -378,57 +378,55 @@ def _copy_camera_export(export_root: Path, dest: Path) -> bool:
     return False
 
 
-def _collect_xmp_cameras(workspace: Path, dest: Path) -> bool:
+def _collect_xmp_cameras(workspace: Path) -> list[dict] | None:
     """
-    Reads RC XMP sidecar files written by -exportXMPForSelectedComponent and
-    converts them to viewer/mesh_cameras.txt (same COLMAP-style format our
-    parser already understands).
+    Reads RC XMP sidecar files written by -exportXMPForSelectedComponent.
 
-    RC XMP rotation matrix (xcr:Rotation, 9 floats, row-major, camera→world).
-    Camera looks along +Z in camera space → forward_world = third column of R
-    = (R[2], R[5], R[8]).  Still in RC Z-up space; _parse_mesh_cameras_txt
-    converts to Three.js Y-up when it reads the file.
+    xcr:Rotation is a 3×3 rotation matrix (camera→world, row-major, 9 floats).
+    Camera looks along +Z in camera space → forward in world = third COLUMN of R
+    = (R[2], R[5], R[8]).  RC world is Z-up; we convert to Three.js Y-up here.
 
-    We write a minimal name-first rotation-matrix format:
-        <name>  0 0 0  R[0] R[1] R[2]  R[3] R[4] R[5]  R[6] R[7] R[8]
-    which the existing rotation-matrix branch of _parse_mesh_cameras_txt handles.
+    Returns [{filename, fwd_x, fwd_y, fwd_z}] or None.
     """
     import xml.etree.ElementTree as ET
     xmp_files = list(workspace.glob("*.xmp")) + list(workspace.glob("*.XMP"))
     if not xmp_files:
         logger.warning("Keine XMP-Dateien in workspace gefunden – auto-alignment nicht möglich")
-        return False
+        return None
 
-    lines = []
+    cameras = []
     for xf in sorted(xmp_files):
         try:
             tree = ET.parse(xf)
             root = tree.getroot()
-            # Find xcr:Rotation text anywhere in the tree
             rot_text = None
-            pos_text = None
             for elem in root.iter():
                 tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
                 if tag == "Rotation" and elem.text:
                     rot_text = elem.text.strip()
-                # xcr:Position gives camera origin — not needed for forward vector
             if rot_text is None:
                 continue
             rot = [float(v) for v in rot_text.split()]
             if len(rot) != 9:
                 continue
-            name = xf.stem + ".jpg"   # frame_0001.xmp → frame_0001.jpg
-            lines.append(f"{name} 0 0 0 " + " ".join(f"{v:.8f}" for v in rot))
+            # camera→world, +Z forward → forward = third column = (rot[2], rot[5], rot[8])
+            # RC Z-up → Three.js Y-up: (X_rc, Y_rc, Z_rc) → (X_rc, Z_rc, –Y_rc)
+            fx_rc, fy_rc, fz_rc = rot[2], rot[5], rot[8]
+            cameras.append({
+                "filename": xf.stem + ".jpg",
+                "fwd_x":   round(fx_rc,  6),
+                "fwd_y":   round(fz_rc,  6),
+                "fwd_z":   round(-fy_rc, 6),
+            })
         except Exception as exc:
             logger.warning(f"XMP parse error {xf.name}: {exc}")
 
-    if not lines:
+    if not cameras:
         logger.warning("Keine gültigen Kamera-Posen in XMP-Dateien – auto-alignment nicht möglich")
-        return False
+        return None
 
-    dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    logger.info(f"XMP-Kameras: {len(lines)} Einträge → {dest.name}")
-    return True
+    logger.info(f"XMP-Kameras: {len(cameras)} Einträge geparst")
+    return cameras
 
 
 def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> bool:
@@ -446,8 +444,7 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     wird geprüft ob scene_mesh.glb tatsächlich existiert und Inhalt hat.
     """
     viewer.mkdir(parents=True, exist_ok=True)
-    output_glb  = viewer / "scene_mesh.glb"
-    cameras_txt = viewer / "mesh_cameras.txt"
+    output_glb = viewer / "scene_mesh.glb"
 
     win_input  = _to_win_path(workspace)
     win_output = _to_win_path(output_glb)
@@ -485,7 +482,6 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
                 )
             else:
                 logger.info(f"scene_mesh.glb erzeugt: {size_mb:.1f} MB")
-            _collect_xmp_cameras(workspace, cameras_txt)
             return True
         logger.error(
             f"RealityScan: scene_mesh.glb nicht erzeugt (exitcode={result.returncode})"
@@ -688,8 +684,8 @@ def process_scan(
     # ── PFAD B: RealityScan (langsam, alle 27 Frames) ───────────────────
     logger.info("--- PFAD B: RealityScan ---")
     if _run_realityscan(workspace, viewer, realityscan_exe):
-        # Kamera-Export parsen und als JSON schreiben (für Auto-Ausrichtung im Viewer)
-        cameras = _parse_mesh_cameras_txt(viewer / "mesh_cameras.txt")
+        # XMP-Kameras parsen und als JSON schreiben (für Auto-Ausrichtung im Viewer)
+        cameras = _collect_xmp_cameras(workspace)
         if cameras:
             _write_mesh_cameras_json(cameras, viewer)
         _compress_draco(viewer)
