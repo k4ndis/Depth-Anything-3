@@ -329,7 +329,9 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         "-calculateTexture",
         "-renameSelectedModel",        "scene_mesh",
         "-exportModel",                "scene_mesh",  win_output,
-        "-exportCamerasAsTxt",         win_cameras,
+        # NOTE: -exportCamerasAsTxt does not exist in RealityScan 2.1 (err:7180).
+        # Until the correct RC camera-export CLI flag is found, auto mesh-to-cloud
+        # alignment is disabled; use the mesh Y-rotation slider in the viewer.
         "-quit",
     ]
     logger.info(f"RealityScan-Befehl: {' '.join(cmd)}")
