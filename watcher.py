@@ -356,7 +356,20 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
 
     win_input    = _to_win_path(workspace)
     win_output   = _to_win_path(output_glb)
-    win_cameras  = _to_win_path(cameras_txt)
+
+    # RC's -exportRegistration cannot write to \\wsl.localhost\... UNC paths
+    # (err:5618), even though -exportModel can.  Route the export to a native
+    # Windows temp path and copy back after RC completes.
+    win_cameras_candidate = _to_win_path(cameras_txt)
+    if win_cameras_candidate.startswith("\\\\wsl"):
+        cameras_win_linux = Path("/mnt/c/Windows/Temp/neptun_mesh_cameras.txt")
+        win_cameras = _to_win_path(cameras_win_linux)
+        logger.info(
+            f"Kamera-Export via Windows-Temp: {win_cameras} → {cameras_txt.name}"
+        )
+    else:
+        cameras_win_linux = cameras_txt
+        win_cameras = win_cameras_candidate
 
     cmd = [
         realityscan_exe,
@@ -387,6 +400,17 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
                 )
             else:
                 logger.info(f"scene_mesh.glb erzeugt: {size_mb:.1f} MB")
+            # Copy camera export from Windows temp back to viewer directory
+            if cameras_win_linux != cameras_txt:
+                if cameras_win_linux.exists():
+                    shutil.copy2(cameras_win_linux, cameras_txt)
+                    cameras_win_linux.unlink()
+                    logger.info(f"Kamera-Export nach {cameras_txt.name} kopiert")
+                else:
+                    logger.warning(
+                        "Kamera-Export nicht in Windows-Temp gefunden – "
+                        "auto-alignment nicht möglich"
+                    )
             return True
         logger.error(
             f"RealityScan: scene_mesh.glb nicht erzeugt (exitcode={result.returncode})"
