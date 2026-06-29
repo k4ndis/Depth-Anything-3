@@ -333,6 +333,49 @@ def _to_win_path(path: Path) -> str:
     return "\\\\wsl.localhost\\Ubuntu" + p.replace("/", "\\")
 
 
+def _copy_camera_export(export_dir: Path, dest: Path) -> bool:
+    """
+    After RC's -exportRegistration, find the camera file in export_dir and
+    copy it to dest (viewer/mesh_cameras.txt).
+
+    COLMAP layout:  images.txt  (primary) + cameras.txt + points3D.txt
+    Other formats:  a single .txt or .csv at the top level of export_dir
+                    (or export_dir itself if RC wrote it as a file).
+
+    Returns True if a file was copied.
+    """
+    if not export_dir.exists():
+        logger.warning(f"Kamera-Export-Verzeichnis nicht gefunden: {export_dir}")
+        return False
+
+    # COLMAP: prefer images.txt
+    colmap_images = export_dir / "images.txt"
+    if colmap_images.exists() and colmap_images.stat().st_size > 0:
+        shutil.copy2(colmap_images, dest)
+        shutil.rmtree(export_dir, ignore_errors=True)
+        logger.info(f"COLMAP images.txt → {dest.name} kopiert")
+        return True
+
+    # Fallback: any non-empty .txt or .csv directly in the directory
+    for suffix in (".txt", ".csv"):
+        candidates = [
+            f for f in export_dir.iterdir()
+            if f.suffix.lower() == suffix and f.stat().st_size > 0
+        ]
+        if candidates:
+            shutil.copy2(candidates[0], dest)
+            shutil.rmtree(export_dir, ignore_errors=True)
+            logger.info(f"{candidates[0].name} → {dest.name} kopiert")
+            return True
+
+    logger.warning(
+        f"Kamera-Export: keine Datei in {export_dir} gefunden – "
+        "auto-alignment nicht möglich"
+    )
+    shutil.rmtree(export_dir, ignore_errors=True)
+    return False
+
+
 def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> bool:
     """
     Fuehrt RealityScan 2.x (RealityCapture-Engine) auf allen 27 Frames aus.
@@ -357,19 +400,19 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     win_input    = _to_win_path(workspace)
     win_output   = _to_win_path(output_glb)
 
-    # RC's -exportRegistration cannot write to \\wsl.localhost\... UNC paths
-    # (err:5618), even though -exportModel can.  Route the export to a native
-    # Windows temp path and copy back after RC completes.
-    win_cameras_candidate = _to_win_path(cameras_txt)
-    if win_cameras_candidate.startswith("\\\\wsl"):
-        cameras_win_linux = Path("/mnt/c/Windows/Temp/neptun_mesh_cameras.txt")
-        win_cameras = _to_win_path(cameras_win_linux)
-        logger.info(
-            f"Kamera-Export via Windows-Temp: {win_cameras} → {cameras_txt.name}"
-        )
-    else:
-        cameras_win_linux = cameras_txt
-        win_cameras = win_cameras_candidate
+    # RC's -exportRegistration fails on \\wsl.localhost\... UNC paths (err:5618)
+    # AND on C:\Windows\Temp (restricted to SYSTEM/admin).
+    # COLMAP format also exports a *directory* (images.txt + cameras.txt +
+    # points3D.txt), so the path must be a folder, not a file.
+    # Use C:\Users\Public\neptun_cameras\ — world-writable on every Windows install,
+    # accessible from WSL at /mnt/c/Users/Public/neptun_cameras/.
+    cameras_export_dir_linux = Path("/mnt/c/Users/Public/neptun_cameras")
+    win_cameras = "C:\\Users\\Public\\neptun_cameras"
+    # Clear any leftover from a previous run
+    if cameras_export_dir_linux.exists():
+        shutil.rmtree(cameras_export_dir_linux, ignore_errors=True)
+    cameras_export_dir_linux.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Kamera-Export-Verzeichnis: {win_cameras}")
 
     cmd = [
         realityscan_exe,
@@ -400,17 +443,10 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
                 )
             else:
                 logger.info(f"scene_mesh.glb erzeugt: {size_mb:.1f} MB")
-            # Copy camera export from Windows temp back to viewer directory
-            if cameras_win_linux != cameras_txt:
-                if cameras_win_linux.exists():
-                    shutil.copy2(cameras_win_linux, cameras_txt)
-                    cameras_win_linux.unlink()
-                    logger.info(f"Kamera-Export nach {cameras_txt.name} kopiert")
-                else:
-                    logger.warning(
-                        "Kamera-Export nicht in Windows-Temp gefunden – "
-                        "auto-alignment nicht möglich"
-                    )
+            # Find the camera registration file RC wrote into the export directory.
+            # COLMAP layout: images.txt (primary), cameras.txt, points3D.txt.
+            # Other formats may write a single .txt or .csv directly.
+            _copy_camera_export(cameras_export_dir_linux, cameras_txt)
             return True
         logger.error(
             f"RealityScan: scene_mesh.glb nicht erzeugt (exitcode={result.returncode})"
