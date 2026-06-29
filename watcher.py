@@ -320,7 +320,10 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         realityscan_exe,
         "-addFolder",                  win_input,
         "-align",
-        "-selectMaximalComponent",
+        # Do NOT use -selectMaximalComponent: it drops camera groups that cover
+        # the extreme pan positions (10°/170°) if they form a separate component,
+        # which causes the left/right sides of the room to vanish from the mesh.
+        # RC will reconstruct everything that aligned.
         "-setReconstructionRegionAuto",
         "-calculateNormalModel",
         "-calculateTexture",
