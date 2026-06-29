@@ -400,18 +400,14 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     win_input    = _to_win_path(workspace)
     win_output   = _to_win_path(output_glb)
 
-    # RC's -exportRegistration fails on \\wsl.localhost\... UNC paths (err:5618)
-    # AND on C:\Windows\Temp (restricted to SYSTEM/admin).
-    # COLMAP format also exports a *directory* (images.txt + cameras.txt +
-    # points3D.txt), so the path must be a folder, not a file.
-    # Use C:\Users\Public\neptun_cameras\ — world-writable on every Windows install,
-    # accessible from WSL at /mnt/c/Users/Public/neptun_cameras/.
-    cameras_export_dir_linux = Path("/mnt/c/Users/Public/neptun_cameras")
-    win_cameras = "C:\\Users\\Public\\neptun_cameras"
-    # Clear any leftover from a previous run
-    if cameras_export_dir_linux.exists():
-        shutil.rmtree(cameras_export_dir_linux, ignore_errors=True)
-    cameras_export_dir_linux.mkdir(parents=True, exist_ok=True)
+    # COLMAP -exportRegistration needs a *directory* (it creates images.txt,
+    # cameras.txt, points3D.txt inside).  Use a subdirectory of viewer so the
+    # same UNC path that works for -exportModel also works here.
+    cameras_export_dir = viewer / "rc_cameras"
+    if cameras_export_dir.exists():
+        shutil.rmtree(cameras_export_dir, ignore_errors=True)
+    cameras_export_dir.mkdir(parents=True, exist_ok=True)
+    win_cameras = _to_win_path(cameras_export_dir)
     logger.info(f"Kamera-Export-Verzeichnis: {win_cameras}")
 
     cmd = [
@@ -446,7 +442,7 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
             # Find the camera registration file RC wrote into the export directory.
             # COLMAP layout: images.txt (primary), cameras.txt, points3D.txt.
             # Other formats may write a single .txt or .csv directly.
-            _copy_camera_export(cameras_export_dir_linux, cameras_txt)
+            _copy_camera_export(cameras_export_dir, cameras_txt)
             return True
         logger.error(
             f"RealityScan: scene_mesh.glb nicht erzeugt (exitcode={result.returncode})"
