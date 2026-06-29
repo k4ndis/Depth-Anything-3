@@ -179,10 +179,14 @@ def _parse_mesh_cameras_txt(cameras_txt: Path) -> list[dict] | None:
         return None
 
     cameras = []
+    skip_next = False  # COLMAP images.txt: every image has two lines; skip POINTS2D line
     with open(cameras_txt, encoding="utf-8", errors="replace") as fh:
         for line in fh:
             line = line.strip()
             if not line or line.startswith("#"):
+                continue
+            if skip_next:
+                skip_next = False
                 continue
             parts = line.replace(",", " ").split()
             if len(parts) < 7:
@@ -211,6 +215,7 @@ def _parse_mesh_cameras_txt(cameras_txt: Path) -> list[dict] | None:
 
             if colmap:
                 name = parts[-1]
+                skip_next = True  # next data line is POINTS2D — skip it
                 # q is world→camera, camera looks along +Z in camera space.
                 # forward_world = q⁻¹ · (0,0,1) = –(q⁻¹ · (0,0,–1))
                 #               = –_quat_rotate_minus_z(qw, –qx, –qy, –qz)
@@ -333,46 +338,43 @@ def _to_win_path(path: Path) -> str:
     return "\\\\wsl.localhost\\Ubuntu" + p.replace("/", "\\")
 
 
-def _copy_camera_export(export_dir: Path, dest: Path) -> bool:
+def _copy_camera_export(export_root: Path, dest: Path) -> bool:
     """
-    After RC's -exportRegistration, find the camera file in export_dir and
-    copy it to dest (viewer/mesh_cameras.txt).
+    After RC's -exportRegistration, find images.txt and copy to dest.
 
-    COLMAP layout:  images.txt  (primary) + cameras.txt + points3D.txt
-    Other formats:  a single .txt or .csv at the top level of export_dir
-                    (or export_dir itself if RC wrote it as a file).
+    RC COLMAP layout:
+        {export_root}/sparse/0/images.txt   ← camera poses (what we need)
+        {export_root}/sparse/0/cameras.txt
+        {export_root}/sparse/0/points3D.txt
+        {export_root}/images/               ← empty folder
 
-    Returns True if a file was copied.
+    Returns True if images.txt was found and copied.
     """
-    if not export_dir.exists():
-        logger.warning(f"Kamera-Export-Verzeichnis nicht gefunden: {export_dir}")
+    if not export_root.exists():
+        logger.warning(f"Kamera-Export-Verzeichnis nicht gefunden: {export_root}")
         return False
 
-    # COLMAP: prefer images.txt
-    colmap_images = export_dir / "images.txt"
-    if colmap_images.exists() and colmap_images.stat().st_size > 0:
-        shutil.copy2(colmap_images, dest)
-        shutil.rmtree(export_dir, ignore_errors=True)
-        logger.info(f"COLMAP images.txt → {dest.name} kopiert")
+    # Primary: COLMAP sparse/0/images.txt
+    images_txt = export_root / "sparse" / "0" / "images.txt"
+    if images_txt.exists() and images_txt.stat().st_size > 0:
+        shutil.copy2(images_txt, dest)
+        shutil.rmtree(export_root, ignore_errors=True)
+        logger.info(f"COLMAP sparse/0/images.txt → {dest.name} kopiert")
         return True
 
-    # Fallback: any non-empty .txt or .csv directly in the directory
-    for suffix in (".txt", ".csv"):
-        candidates = [
-            f for f in export_dir.iterdir()
-            if f.suffix.lower() == suffix and f.stat().st_size > 0
-        ]
-        if candidates:
-            shutil.copy2(candidates[0], dest)
-            shutil.rmtree(export_dir, ignore_errors=True)
-            logger.info(f"{candidates[0].name} → {dest.name} kopiert")
-            return True
+    # Fallback: images.txt directly in root (older RC versions)
+    direct = export_root / "images.txt"
+    if direct.exists() and direct.stat().st_size > 0:
+        shutil.copy2(direct, dest)
+        shutil.rmtree(export_root, ignore_errors=True)
+        logger.info(f"COLMAP images.txt (root) → {dest.name} kopiert")
+        return True
 
     logger.warning(
-        f"Kamera-Export: keine Datei in {export_dir} gefunden – "
+        f"Kamera-Export: sparse/0/images.txt nicht in {export_root} – "
         "auto-alignment nicht möglich"
     )
-    shutil.rmtree(export_dir, ignore_errors=True)
+    shutil.rmtree(export_root, ignore_errors=True)
     return False
 
 
@@ -391,17 +393,24 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     wird geprüft ob scene_mesh.glb tatsächlich existiert und Inhalt hat.
     """
     viewer.mkdir(parents=True, exist_ok=True)
-    output_glb   = viewer / "scene_mesh.glb"
-    cameras_txt  = viewer / "mesh_cameras.txt"
-    # params.xml is exported once from RC GUI:
-    #   Alignment → Export Registration → COLMAP → "Export settings" button
-    # Without it, RC has no format config in batch mode and fails with err:5618.
-    params_xml   = Path(__file__).parent / "viewer" / "rc_export_params.xml"
+    output_glb        = viewer / "scene_mesh.glb"
+    cameras_txt       = viewer / "mesh_cameras.txt"
+
+    # -exportRegistration needs a Windows-native path; WSL UNC paths fail (err:5618).
+    # RC creates the full COLMAP structure itself:
+    #   {root}/sparse/0/images.txt   ← camera poses
+    #   {root}/sparse/0/cameras.txt
+    #   {root}/sparse/0/points3D.txt
+    #   {root}/images/               ← empty
+    # C:\Users\Public\neptun_colmap is world-writable on every Windows install.
+    colmap_root_linux = Path("/mnt/c/Users/Public/neptun_colmap")
+    win_cameras       = "C:\\Users\\Public\\neptun_colmap"
+    # Clean up any leftover from a previous run so RC can create it fresh
+    if colmap_root_linux.exists():
+        shutil.rmtree(colmap_root_linux, ignore_errors=True)
 
     win_input    = _to_win_path(workspace)
     win_output   = _to_win_path(output_glb)
-    win_cameras  = _to_win_path(cameras_txt)
-    win_params   = _to_win_path(params_xml) if params_xml.exists() else None
 
     cmd = [
         realityscan_exe,
@@ -416,18 +425,12 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         "-calculateTexture",
         "-renameSelectedModel",        "scene_mesh",
         "-exportModel",                "scene_mesh",  win_output,
+        # Uses the format last selected in RC GUI (Export Registration dialog).
+        # One-time setup: open RC GUI → Alignment → Export Registration → COLMAP → OK.
+        # RC remembers this setting between sessions.
+        "-exportRegistration",         win_cameras,
+        "-quit",
     ]
-    if win_params:
-        # -exportRegistration fileName params.xml
-        # params.xml defines the export format (COLMAP); without it RC aborts (err:5618)
-        cmd += ["-exportRegistration", win_cameras, win_params]
-        logger.info(f"Kamera-Export: {win_cameras} (params: {win_params})")
-    else:
-        logger.warning(
-            f"rc_export_params.xml nicht gefunden ({params_xml}) – "
-            "-exportRegistration übersprungen, kein auto-alignment"
-        )
-    cmd += ["-quit"]
     logger.info(f"RealityScan-Befehl: {' '.join(cmd)}")
     try:
         result = subprocess.run(cmd, timeout=3600)
@@ -441,6 +444,7 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
                 )
             else:
                 logger.info(f"scene_mesh.glb erzeugt: {size_mb:.1f} MB")
+            _copy_camera_export(colmap_root_linux, cameras_txt)
             return True
         logger.error(
             f"RealityScan: scene_mesh.glb nicht erzeugt (exitcode={result.returncode})"
