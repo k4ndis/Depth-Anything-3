@@ -392,13 +392,16 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     """
     viewer.mkdir(parents=True, exist_ok=True)
     output_glb   = viewer / "scene_mesh.glb"
-    # RC exports registration in the format last selected in the GUI.
-    # One-time setup: choose "COLMAP" in Export → Registration once.
-    # Parser auto-detects COLMAP / OPK / quaternion / rotation-matrix.
     cameras_txt  = viewer / "mesh_cameras.txt"
+    # params.xml is exported once from RC GUI:
+    #   Alignment → Export Registration → COLMAP → "Export settings" button
+    # Without it, RC has no format config in batch mode and fails with err:5618.
+    params_xml   = Path(__file__).parent / "viewer" / "rc_export_params.xml"
 
     win_input    = _to_win_path(workspace)
     win_output   = _to_win_path(output_glb)
+    win_cameras  = _to_win_path(cameras_txt)
+    win_params   = _to_win_path(params_xml) if params_xml.exists() else None
 
     cmd = [
         realityscan_exe,
@@ -413,12 +416,18 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
         "-calculateTexture",
         "-renameSelectedModel",        "scene_mesh",
         "-exportModel",                "scene_mesh",  win_output,
-        # NOTE: -exportRegistration aborts the entire batch in RealityScan (err:5618)
-        # regardless of path (WSL UNC, C:\Windows\Temp, C:\Users\Public all fail).
-        # Camera-pose auto-alignment is skipped for now; user can use the Y-rotation
-        # slider in room-viewer.html for manual alignment.
-        "-quit",
     ]
+    if win_params:
+        # -exportRegistration fileName params.xml
+        # params.xml defines the export format (COLMAP); without it RC aborts (err:5618)
+        cmd += ["-exportRegistration", win_cameras, win_params]
+        logger.info(f"Kamera-Export: {win_cameras} (params: {win_params})")
+    else:
+        logger.warning(
+            f"rc_export_params.xml nicht gefunden ({params_xml}) – "
+            "-exportRegistration übersprungen, kein auto-alignment"
+        )
+    cmd += ["-quit"]
     logger.info(f"RealityScan-Befehl: {' '.join(cmd)}")
     try:
         result = subprocess.run(cmd, timeout=3600)
