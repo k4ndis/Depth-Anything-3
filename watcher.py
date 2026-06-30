@@ -11,8 +11,8 @@ watcher.py – PC-seitiger DA3- und RealityScan-Watcher
     DA3 erzeugt scene.glb → Supabase → scan_status = "complete".
 
   PFAD B – RealityScan 2.0 (langsam, 27 Frames):
-    Alle 27 Frames → RealityScan CLI → scene_mesh.glb
-    → Draco-Komprimierung (Geometrie)
+    XMP-Pose-Priors aus Servo-Kinematik → alle 27 Frames → RealityScan CLI
+    → scene_mesh.glb → Draco-Komprimierung (Geometrie)
     → Supabase → mesh_status = "complete".
 
     Hinweis zur Dateigröße: Nach Draco ist das GLB typischerweise 60-80 MB,
@@ -55,6 +55,13 @@ except ImportError:
     pass
 
 from supabase import create_client
+
+try:
+    from neptun.xmp_poses import write_xmp_priors
+    from neptun.config import ARM_LENGTH_M, FOCAL_LENGTH_35MM, STEREO_OFFSET_M
+    _XMP_AVAILABLE = True
+except ImportError:
+    _XMP_AVAILABLE = False
 
 logging.basicConfig(
     level=logging.INFO,
@@ -188,10 +195,18 @@ def _to_win_path(path: Path) -> str:
     return "\\\\wsl.localhost\\Ubuntu" + p.replace("/", "\\")
 
 
-def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> bool:
+def _run_realityscan(
+    workspace: Path, viewer: Path, realityscan_exe: str, metadata: dict | None = None
+) -> bool:
     """
     Fuehrt RealityScan 2.x (RealityCapture-Engine) auf allen 27 Frames aus.
     Ausgabe: viewer/scene_mesh.glb (texturiertes Mesh)
+
+    Vor dem CLI-Aufruf werden XMP-Pose-Priors in den Workspace geschrieben
+    (neptun/xmp_poses.py).  RealityCapture liest sie automatisch über
+    -addFolder ein und verwendet sie als Exact-Priors statt blind SfM zu
+    laufen.  Das erzeugt ein Mesh im Servo-Weltkoordinatensystem, das der
+    Viewer in room-viewer.html direkt registrieren kann.
 
     Qualität: calculateNormalModel (statt High) – erzeugt deutlich kleinere
     Dateien (~10-80 MB) die in Supabase Storage hochgeladen werden können.
@@ -205,6 +220,32 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     viewer.mkdir(parents=True, exist_ok=True)
     output_glb = viewer / "scene_mesh.glb"
 
+    # ── XMP-Pose-Priors schreiben ─────────────────────────────────────────────
+    if _XMP_AVAILABLE and metadata:
+        frames = [
+            {
+                "filename": f["filename"],
+                "pan_deg":  float(f["pan_deg"]),
+                "tilt_deg": float(f["tilt_deg"]),
+            }
+            for f in metadata.get("frames", [])
+            if (workspace / f["filename"]).exists()
+        ]
+        if frames:
+            written = write_xmp_priors(
+                frames, workspace,
+                arm_length=ARM_LENGTH_M,
+                focal_35mm=FOCAL_LENGTH_35MM,
+                stereo_offset=STEREO_OFFSET_M,
+                pose_prior="exact",
+            )
+            logger.info(f"XMP-Priors: {len(written)}/{len(frames)} Frames geschrieben")
+        else:
+            logger.warning("Keine Frames in scan_metadata.json – RealityScan ohne Pose-Priors")
+    elif not _XMP_AVAILABLE:
+        logger.warning("neptun-Modul nicht gefunden – RealityScan ohne Pose-Priors")
+
+    # ── RealityScan CLI ───────────────────────────────────────────────────────
     win_input  = _to_win_path(workspace)
     win_output = _to_win_path(output_glb)
 
@@ -423,7 +464,7 @@ def process_scan(
 
     # ── PFAD B: RealityScan (langsam, alle 27 Frames) ───────────────────
     logger.info("--- PFAD B: RealityScan ---")
-    if _run_realityscan(workspace, viewer, realityscan_exe):
+    if _run_realityscan(workspace, viewer, realityscan_exe, metadata=metadata):
         _compress_draco(viewer)
         if _upload_mesh_glb(sb, device_id, viewer):
             _set_mesh_status(sb, device_id, "complete")
