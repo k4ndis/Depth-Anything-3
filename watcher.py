@@ -382,9 +382,10 @@ def _collect_xmp_cameras(workspace: Path) -> list[dict] | None:
     """
     Reads RC XMP sidecar files written by -exportXMPForSelectedComponent.
 
-    xcr:Rotation is a 3×3 rotation matrix (camera→world, row-major, 9 floats).
-    Camera looks along +Z in camera space → forward in world = third COLUMN of R
-    = (R[2], R[5], R[8]).  RC world is Z-up; we convert to Three.js Y-up here.
+    xcr:Rotation is world→camera (R * world_point = cam_point), row-major, 9 floats.
+    RC camera looks along −Z (OpenGL convention), so forward in world space is:
+      forward_world = R^T @ (0,0,−1) = −(third row of R) = −(rot[6], rot[7], rot[8])
+    RC world is Z-up; we then convert to Three.js Y-up: (X,Y,Z)→(X,Z,−Y).
 
     Returns [{filename, fwd_x, fwd_y, fwd_z}] or None.
     """
@@ -409,9 +410,9 @@ def _collect_xmp_cameras(workspace: Path) -> list[dict] | None:
             rot = [float(v) for v in rot_text.split()]
             if len(rot) != 9:
                 continue
-            # camera→world, +Z forward → forward = third column = (rot[2], rot[5], rot[8])
-            # RC Z-up → Three.js Y-up: (X_rc, Y_rc, Z_rc) → (X_rc, Z_rc, –Y_rc)
-            fx_rc, fy_rc, fz_rc = rot[2], rot[5], rot[8]
+            # world→camera, −Z forward: forward_world = R^T @ (0,0,−1) = −third row
+            # RC Z-up → Three.js Y-up: (X_rc, Y_rc, Z_rc) → (X_rc, Z_rc, −Y_rc)
+            fx_rc, fy_rc, fz_rc = -rot[6], -rot[7], -rot[8]
             cameras.append({
                 "filename": xf.stem + ".jpg",
                 "fwd_x":   round(fx_rc,  6),
