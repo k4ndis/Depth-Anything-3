@@ -43,8 +43,6 @@
     #click-ring.pulse{animation:ringPulse .5s ease-out forwards}
     @keyframes ringPulse{0%{opacity:1;transform:translate(-50%,-50%) scale(.3)}50%{opacity:.7;transform:translate(-50%,-50%) scale(1.3)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.9)}}
 
-    #cal-hint-bar{position:fixed;top:60px;left:50%;transform:translateX(-50%);background:rgba(20,20,0,.85);border:1px solid rgba(255,220,0,.4);border-radius:8px;padding:8px 18px;color:rgba(255,230,80,.9);font-size:12px;pointer-events:none;display:none;backdrop-filter:blur(4px);z-index:10}
-
     #settings{position:fixed;top:56px;left:16px;background:rgba(8,10,20,.92);border:1px solid rgba(100,160,255,.22);border-radius:10px;padding:16px 18px;color:rgba(160,200,255,.8);font-size:12px;display:none;min-width:320px;backdrop-filter:blur(8px);z-index:15}
     #settings h3{color:#7acfff;margin-bottom:12px;font-size:13px;letter-spacing:.03em}
     .srow{display:flex;align-items:center;gap:8px;margin-bottom:8px}
@@ -69,7 +67,6 @@
 
 <div id="controls">
   <button class="btn" id="btn-reset">⌂ Reset</button>
-  <button class="btn" id="btn-cal-fwd" style="display:none" title="Servo auf Pan=90°/Tilt=90° stellen, dann klicken wohin die Kamera zeigt">🎯 Pan90-Ziel</button>
   <button class="btn" id="btn-settings">⚙</button>
 </div>
 
@@ -84,18 +81,16 @@
   <div id="manual-hint">⚠ NEPTUN muss im Manual Mode sein</div>
 </div>
 
-<div id="hud">Klick → Kamera ausrichten + Pan/Tilt · 🎯 → Ausrichtung kalibrieren</div>
-<div id="cal-hint-bar">Servo auf <b>Pan=90° / Tilt=90°</b> stellen, dann in der 3D-Karte klicken, wohin die Kamera gerade zeigt</div>
+<div id="hud">Klick → Kamera ausrichten + Pan/Tilt</div>
 <div id="click-ring"></div>
 
 <div id="settings">
   <h3>⚙ NEPTUN Einstellungen</h3>
   <div class="srow">
-    <label>Kamerarichtung</label>
-    <input type="range" id="heading-slider" min="0" max="359" value="0" step="1"/>
-    <span class="sval" id="heading-val">0°</span>
+    <label>Rig-Ausrichtung</label>
+    <span class="sval" id="alignment-status" style="text-align:left;flex:1">–</span>
   </div>
-  <div class="shint">Wird aus scan_metadata.json automatisch berechnet</div>
+  <div class="shint">Aus scan_metadata.json + rig_kinematics berechnet (nicht manuell einstellbar)</div>
   <hr class="sdivider"/>
   <div style="font-size:11px;color:rgba(140,180,220,.5);margin-bottom:8px">Supabase – für „an NEPTUN senden“</div>
   <div class="srow"><label>Supabase URL</label><input type="text" id="sb-url" placeholder="https://xxx.supabase.co"/></div>
@@ -115,10 +110,10 @@
 import * as THREE        from 'three';
 import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-
-const PAN_HOME = 90, TILT_HOME = 90;
-const PAN_MIN  = 0,  PAN_MAX   = 180;
-const TILT_MIN = 70, TILT_MAX  = 120;
+import {
+  forward, inverse, PAN_HOME_DEG, TILT_HOME_DEG,
+  RIG_TESTMODELL, RIG_PILOTMODELL,
+} from './rig-kinematics.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
@@ -152,45 +147,30 @@ const manualHint   = document.getElementById('manual-hint');
 const clickRing    = document.getElementById('click-ring');
 const controlsEl   = document.getElementById('controls');
 const settingsEl   = document.getElementById('settings');
-const headingSl    = document.getElementById('heading-slider');
-const headingValEl = document.getElementById('heading-val');
-const btnCalFwd    = document.getElementById('btn-cal-fwd');
-const calHintBar   = document.getElementById('cal-hint-bar');
+const alignStatusEl = document.getElementById('alignment-status');
 
 const allPoints    = [];
 const homePos      = { cam: new THREE.Vector3(), tgt: new THREE.Vector3() };
 let camMarker      = null;
 let camWorldPos    = null;
-let headingDeg     = 0;
-let calibratingFwd = false;
+let rigConfig      = RIG_TESTMODELL;
+let rigAlignment   = null;  // { rotateY(), rigToScene(), sceneToRig() } – siehe fitRigAlignment()
 let lastTargetPt   = null;
 let lastPanTilt    = null;
-let floorPlane     = null;
 let headingRayLine = null;
 
 function loadSettings() {
-  headingDeg = parseFloat(localStorage.getItem('neptun_heading') ?? 'NaN');
-  if (isNaN(headingDeg)) headingDeg = 0;
-  headingSl.value = headingDeg;
-  headingValEl.textContent = headingDeg + '°';
   document.getElementById('sb-url').value    = localStorage.getItem('neptun_sb_url')    ?? '';
   document.getElementById('sb-key').value    = localStorage.getItem('neptun_sb_key')    ?? '';
   document.getElementById('sb-device').value = localStorage.getItem('neptun_sb_device') ?? '';
 }
 
 document.getElementById('btn-sb-save').addEventListener('click', () => {
-  localStorage.setItem('neptun_heading',   headingDeg.toString());
   localStorage.setItem('neptun_sb_url',    document.getElementById('sb-url').value.trim());
   localStorage.setItem('neptun_sb_key',    document.getElementById('sb-key').value.trim());
   localStorage.setItem('neptun_sb_device', document.getElementById('sb-device').value.trim());
   settingsEl.style.display = 'none';
   refreshSendBtn();
-});
-headingSl.addEventListener('input', () => {
-  headingDeg = parseInt(headingSl.value);
-  headingValEl.textContent = headingDeg + '°';
-  updateHeadingRay();
-  if (lastTargetPt && camWorldPos) displayPanTilt(lastTargetPt);
 });
 document.getElementById('btn-settings').addEventListener('click', () => {
   settingsEl.style.display = settingsEl.style.display === 'none' ? 'block' : 'none';
@@ -210,19 +190,69 @@ function buildCamMarker() {
   return g;
 }
 
-function updateHeadingRay() {
+// Fittet die Starrkörper-Transformation (Rotation um +Y + Translation)
+// zwischen dem Rig-Referenzsystem (rig_kinematics.forward()) und dem
+// DA3-Rekonstruktionsframe (beliebig orientiert, aber maßstabsgetreu).
+// Ersetzt den früheren manuellen headingDeg-Slider vollständig.
+function fitRigAlignment(scanCams, metaFrames, config) {
+  const n = Math.min(scanCams.length, metaFrames.length);
+  if (!n) return null;
+
+  const rigPoses = [];
+  let sinSum = 0, cosSum = 0;
+  for (let i = 0; i < n; i++) {
+    const { position, orientation } = forward(metaFrames[i].pan_deg, metaFrames[i].tilt_deg, config, 'single');
+    rigPoses.push(position);
+    const observedYaw = Math.atan2(scanCams[i].fwd.x, scanCams[i].fwd.z);
+    const rigYaw = orientation.yawDeg * Math.PI / 180;
+    const delta = observedYaw - rigYaw;
+    sinSum += Math.sin(delta); cosSum += Math.cos(delta);
+  }
+  const yawRad = Math.atan2(sinSum / n, cosSum / n);
+  const cosA = Math.cos(yawRad), sinA = Math.sin(yawRad);
+
+  const rotateY = (p) => ({
+    x: p.x * cosA + p.z * sinA,
+    y: p.y,
+    z: -p.x * sinA + p.z * cosA,
+  });
+
+  let tx = 0, ty = 0, tz = 0;
+  for (let i = 0; i < n; i++) {
+    const r = rotateY(rigPoses[i]);
+    tx += scanCams[i].pos.x - r.x;
+    ty += scanCams[i].pos.y - r.y;
+    tz += scanCams[i].pos.z - r.z;
+  }
+  tx /= n; ty /= n; tz /= n;
+
+  return {
+    yawDeg: yawRad * 180 / Math.PI,
+    rigToScene(p) {
+      const r = rotateY(p);
+      return new THREE.Vector3(r.x + tx, r.y + ty, r.z + tz);
+    },
+    rigDirectionToScene(d) {
+      const r = rotateY(d);
+      return new THREE.Vector3(r.x, r.y, r.z);
+    },
+    sceneToRig(p) {
+      const rx = p.x - tx, ry = p.y - ty, rz = p.z - tz;
+      return { x: rx * cosA - rz * sinA, y: ry, z: rx * sinA + rz * cosA };
+    },
+  };
+}
+
+function updateAlignmentRay() {
   if (headingRayLine) {
     scene.remove(headingRayLine);
     headingRayLine.geometry.dispose();
     headingRayLine = null;
   }
-  if (camWorldPos) {
-    const rad = headingDeg * Math.PI / 180;
-    const dir = new THREE.Vector3(Math.sin(rad), 0, Math.cos(rad));
-    const pts = [
-      camWorldPos.clone(),
-      camWorldPos.clone().addScaledVector(dir, 4.0)
-    ];
+  if (camWorldPos && rigAlignment) {
+    const { orientation } = forward(PAN_HOME_DEG, TILT_HOME_DEG, rigConfig, 'single');
+    const dir = rigAlignment.rigDirectionToScene({ x: orientation.dx, y: orientation.dy, z: orientation.dz });
+    const pts = [camWorldPos.clone(), camWorldPos.clone().addScaledVector(dir, 4.0)];
     headingRayLine = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(pts),
       new THREE.LineBasicMaterial({ color: 0xffdd00, transparent: true, opacity: 0.45 })
@@ -235,47 +265,53 @@ function placeCamAt(pos, source = 'auto') {
   if (!camMarker) { camMarker = buildCamMarker(); scene.add(camMarker); }
   camMarker.position.copy(pos);
   camWorldPos = pos.clone();
-  updateHeadingRay();
-  const metaBadge = source === 'meta'
-    ? '<span id="auto-badge" style="background:rgba(0,150,255,.15);border-color:rgba(0,150,255,.3);color:#7af">🗺 auto+meta</span>'
-    : '<span id="auto-badge">auto</span>';
+  updateAlignmentRay();
+  const metaBadge = source === 'rig_kinematics'
+    ? '<span id="auto-badge" style="background:rgba(0,150,255,.15);border-color:rgba(0,150,255,.3);color:#7af">🗺 rig_kinematics</span>'
+    : '<span id="auto-badge" style="background:rgba(255,160,0,.15);border-color:rgba(255,160,0,.3);color:#fb8">⚠ unkalibriert</span>';
   infoCam.innerHTML =
-    `📍 ${metaBadge} <b>${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}</b> · Heading: <b>${headingDeg}°</b>`;
+    `📍 ${metaBadge} <b>${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}</b>`;
   infoCam.style.display = 'block';
-  btnCalFwd.style.display = 'block';
   if (lastTargetPt) displayPanTilt(lastTargetPt);
 }
 
-// Target RIGHT of heading → panOfs > 0 → pan = 90 + panOfs > 90 → servo right
-// Target ABOVE camera   → elevDeg > 0 → tilt = 90 + elevDeg > 90 → servo up
-function computePanTilt(camPos, tgtPos) {
-  const rad   = headingDeg * Math.PI / 180;
-  const up    = new THREE.Vector3(0, 1, 0);
-  const fwd   = new THREE.Vector3(Math.sin(rad), 0, Math.cos(rad)).normalize();
-  const right = new THREE.Vector3().crossVectors(up, fwd).normalize();
-  const toT   = new THREE.Vector3().subVectors(tgtPos, camPos);
-  const dist  = toT.length();
+// Zielt die Referenzkamera physikalisch fundiert auf tgtScenePos aus:
+// Zielpunkt aus dem DA3-Szenenframe ins Rig-Referenzsystem transformieren,
+// dort rig_kinematics.inverse() lösen lassen. Ersetzt die alte
+// headingDeg-Näherung (die axis_offset_mm ignorierte).
+function computePanTilt(tgtScenePos) {
+  if (!rigAlignment || !camWorldPos) return null;
+  const dist = camWorldPos.distanceTo(tgtScenePos);
   if (dist < 0.001) return null;
-  toT.normalize();
-  const hz    = new THREE.Vector3(toT.x, 0, toT.z);
-  const hzLen = hz.length();
-  let panOfs;
-  if (hzLen < 0.001) { panOfs = 0; }
-  else { hz.divideScalar(hzLen); panOfs = Math.atan2(hz.dot(right), hz.dot(fwd)) * 180 / Math.PI; }
-  const elevDeg = Math.asin(Math.max(-1, Math.min(1, toT.y))) * 180 / Math.PI;
-  let pan  = Math.round((PAN_HOME  + panOfs)  * 10) / 10;
-  let tilt = Math.round((TILT_HOME + elevDeg) * 10) / 10;
-  const ok = pan >= PAN_MIN && pan <= PAN_MAX && tilt >= TILT_MIN && tilt <= TILT_MAX;
-  pan  = Math.max(PAN_MIN,  Math.min(PAN_MAX,  pan));
-  tilt = Math.max(TILT_MIN, Math.min(TILT_MAX, tilt));
+
+  const rigTarget = rigAlignment.sceneToRig(tgtScenePos);
+  let panDeg, tiltDeg;
+  try {
+    ({ panDeg, tiltDeg } = inverse(rigTarget, rigConfig));
+  } catch {
+    return null;
+  }
+
+  const [panMin, panMax]   = rigConfig.panRangeDeg;
+  const [tiltMin, tiltMax] = rigConfig.tiltRangeDeg;
+  const ok = panDeg >= panMin && panDeg <= panMax && tiltDeg >= tiltMin && tiltDeg <= tiltMax;
+  const pan  = Math.round(Math.max(panMin,  Math.min(panMax,  panDeg))  * 10) / 10;
+  const tilt = Math.round(Math.max(tiltMin, Math.min(tiltMax, tiltDeg)) * 10) / 10;
   return { pan, tilt, dist: Math.round(dist * 100) / 100, ok };
 }
 
 function displayPanTilt(pt) {
   if (!camWorldPos) return;
   lastTargetPt = pt;
-  lastPanTilt  = computePanTilt(camWorldPos, pt);
-  if (!lastPanTilt) return;
+  lastPanTilt  = computePanTilt(pt);
+  const box = document.getElementById('target-box');
+  if (!lastPanTilt) {
+    if (!rigAlignment) {
+      targetInfo.innerHTML = '<span style="color:#f76">⚠ Keine Rig-Ausrichtung (scan_metadata.json fehlt oder unvollständig)</span>';
+      box.style.display = 'block';
+    }
+    return;
+  }
   const { pan, tilt, dist, ok } = lastPanTilt;
   targetInfo.innerHTML =
     `Pan:  <b>${pan.toFixed(1)}°</b><br>` +
@@ -283,7 +319,7 @@ function displayPanTilt(pt) {
     `Dist: <b>${dist} m</b><br>` +
     (ok ? '<span style="color:#4fc">✓ Im Servo-Bereich</span>'
         : '<span style="color:#f76">⚠ Servo-Limit überschritten</span>');
-  document.getElementById('target-box').style.display = 'block';
+  box.style.display = 'block';
   refreshSendBtn();
 }
 
@@ -374,22 +410,6 @@ function _frustumFwd(node, apex) {
   return fwd.length() > 0.001 ? fwd.normalize() : null;
 }
 
-// pan = 90 + panOfs  ⇒  panOfs = pan - 90
-// fwdAngle_i = heading + (pan_i - 90)  ⇒  heading = fwdAngle_i - pan_i + 90
-function _deriveHeading(scanCams, metaFrames) {
-  const n = Math.min(scanCams.length, metaFrames.length);
-  if (!n) return null;
-  let sinSum = 0, cosSum = 0;
-  for (let i = 0; i < n; i++) {
-    const fwdAngle = Math.atan2(scanCams[i].fwd.x, scanCams[i].fwd.z) * 180 / Math.PI;
-    const h = (fwdAngle - metaFrames[i].pan_deg + 90) * Math.PI / 180;
-    sinSum += Math.sin(h); cosSum += Math.cos(h);
-  }
-  let heading = Math.atan2(sinSum / n, cosSum / n) * 180 / Math.PI;
-  if (heading < 0) heading += 360;
-  return Math.round(heading);
-}
-
 const metaPromise = fetch('scan_metadata.json')
   .then(r => r.ok ? r.json() : null)
   .catch(() => null);
@@ -403,8 +423,12 @@ loader.load(
     gltf.scene.updateMatrixWorld(true);
 
     const scanMeta = await metaPromise;
-    if (scanMeta) console.log(`[DA3] scan_metadata.json: ${scanMeta.frame_count} Frames`);
-    else          console.log('[DA3] scan_metadata.json nicht gefunden – manuell kalibrieren');
+    if (scanMeta) {
+      console.log(`[DA3] scan_metadata.json: ${scanMeta.frame_count} Frames`);
+      rigConfig = scanMeta.rig === 'pilotmodell' ? RIG_PILOTMODELL : RIG_TESTMODELL;
+    } else {
+      console.log('[DA3] scan_metadata.json nicht gefunden – keine Rig-Ausrichtung möglich');
+    }
 
     const scanCams = [];
 
@@ -503,41 +527,30 @@ loader.load(
     camera.updateProjectionMatrix(); orbitCtrl.update();
     homePos.cam.copy(camera.position); homePos.tgt.copy(ctr);
 
-    floorPlane = new THREE.Mesh(
-      new THREE.PlaneGeometry(1000, 1000),
-      new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide })
-    );
-    floorPlane.rotation.x = -Math.PI / 2;
-    floorPlane.position.y = box.min.y;
-    scene.add(floorPlane);
-
     if (scanCams.length > 0) {
       const avgPos = new THREE.Vector3();
       scanCams.forEach(c => avgPos.add(c.pos));
       avgPos.divideScalar(scanCams.length);
 
       let camSource = 'auto';
+      let markerPos = avgPos;
 
       if (scanMeta?.frames) {
-        const autoH = _deriveHeading(scanCams, scanMeta.frames);
-        if (autoH !== null) {
-          headingDeg = autoH;
-          headingSl.value = autoH;
-          headingValEl.textContent = autoH + '°';
-          camSource = 'meta';
-          console.log(`[DA3] Auto-Heading: ${autoH}° (aus ${Math.min(scanCams.length, scanMeta.frames.length)} Frames)`);
+        rigAlignment = fitRigAlignment(scanCams, scanMeta.frames, rigConfig);
+        if (rigAlignment) {
+          const { position: homeRigPos } = forward(PAN_HOME_DEG, TILT_HOME_DEG, rigConfig, 'single');
+          markerPos = rigAlignment.rigToScene(homeRigPos);
+          camSource = 'rig_kinematics';
+          alignStatusEl.innerHTML = `✓ yaw=${rigAlignment.yawDeg.toFixed(1)}°`;
+          console.log(`[DA3] Rig-Ausrichtung: yaw=${rigAlignment.yawDeg.toFixed(1)}° (aus ${Math.min(scanCams.length, scanMeta.frames.length)} Frames, rig=${rigConfig === RIG_PILOTMODELL ? 'pilotmodell' : 'testmodell'})`);
+        } else {
+          alignStatusEl.innerHTML = '<span style="color:#f76">fehlgeschlagen</span>';
         }
-      } else if (!localStorage.getItem('neptun_heading')) {
-        const mid = scanCams[Math.floor(scanCams.length / 2)];
-        let h = Math.atan2(mid.fwd.x, mid.fwd.z) * 180 / Math.PI;
-        if (h < 0) h += 360;
-        headingDeg = Math.round(h);
-        headingSl.value = headingDeg;
-        headingValEl.textContent = headingDeg + '°';
-        localStorage.setItem('neptun_heading', headingDeg.toString());
+      } else {
+        alignStatusEl.innerHTML = '<span style="color:#f76">scan_metadata.json fehlt</span>';
       }
 
-      placeCamAt(avgPos, camSource);
+      placeCamAt(markerPos, camSource);
 
       const n = scanCams.length;
       scanCams.forEach((c, i) => {
@@ -558,8 +571,8 @@ loader.load(
     const ptCount = allPoints.reduce((s,p) => s + (p.geometry?.attributes?.position?.count ?? 0), 0);
     let sceneHtml = `Punkte: <b>${ptCount.toLocaleString('de-DE')}</b><br>B×H×T: <b>${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)} m</b>`;
     if (scanCams.length > 0) {
-      const metaStatus = scanMeta?.frames
-        ? `<span style="color:#7af">🗺 vollautomatisch</span>`
+      const metaStatus = rigAlignment
+        ? `<span style="color:#7af">🗺 rig_kinematics</span>`
         : `<span style="color:#fa8">⚠ scan_metadata.json fehlt</span>`;
       sceneHtml += `<br>Scan-Kameras: <b>${scanCams.length}</b> · ${metaStatus}`;
     } else {
@@ -585,15 +598,6 @@ loader.load(
 
 document.getElementById('btn-reset').addEventListener('click', () => flyTo(homePos.tgt, homePos.cam));
 
-btnCalFwd.addEventListener('click', () => {
-  if (!camWorldPos) return;
-  calibratingFwd = !calibratingFwd;
-  btnCalFwd.classList.toggle('active', calibratingFwd);
-  btnCalFwd.textContent = calibratingFwd ? '🎯 Blickziel klicken…' : '🎯 Pan90-Ziel';
-  calHintBar.style.display = calibratingFwd ? 'block' : 'none';
-  renderer.domElement.style.cursor = calibratingFwd ? 'crosshair' : 'default';
-});
-
 const ray   = new THREE.Raycaster();
 ray.params.Points.threshold = 0.05;
 const mouse = new THREE.Vector2();
@@ -606,33 +610,10 @@ renderer.domElement.addEventListener('click', e => {
   mouse.y = -(e.clientY / innerHeight) * 2 + 1;
   ray.setFromCamera(mouse, camera);
 
-  const targets = (calibratingFwd && floorPlane) ? [...allPoints, floorPlane] : allPoints;
-  const hits = ray.intersectObjects(targets, false);
+  const hits = ray.intersectObjects(allPoints, false);
   if (!hits.length) return;
 
   const pt = hits[0].point;
-
-  if (calibratingFwd && camWorldPos) {
-    const dx = pt.x - camWorldPos.x;
-    const dz = pt.z - camWorldPos.z;
-    let h = Math.round(Math.atan2(dx, dz) * 180 / Math.PI);
-    if (h < 0) h += 360;
-    headingDeg = h;
-    headingSl.value = h;
-    headingValEl.textContent = h + '°';
-    localStorage.setItem('neptun_heading', h.toString());
-    updateHeadingRay();
-    infoCam.innerHTML = `📍 <b>${camWorldPos.x.toFixed(2)}, ${camWorldPos.y.toFixed(2)}, ${camWorldPos.z.toFixed(2)}</b> · Heading: <b>${h}°</b> <span style="color:#ff0">✓ manuell</span>`;
-    calibratingFwd = false;
-    btnCalFwd.classList.remove('active');
-    btnCalFwd.textContent = '🎯 Pan90-Ziel';
-    calHintBar.style.display = 'none';
-    renderer.domElement.style.cursor = 'default';
-    ring(e.clientX, e.clientY, 'cal');
-    if (lastTargetPt) displayPanTilt(lastTargetPt);
-    return;
-  }
-
   flyTo(pt, null, true);
   ring(e.clientX, e.clientY, 'tgt');
   if (camWorldPos) displayPanTilt(pt);

@@ -34,6 +34,11 @@ Konfiguration über .env (oder Umgebungsvariablen):
                          RealityScan_2.1/RealityScan.exe)
     GLTF_TRANSFORM_CMD  Pfad zu gltf-transform CLI     (Standard: gltf-transform)
                         Installieren: npm install -g @gltf-transform/cli
+    NEPTUN_CALIBRATION_PATH  Pfad zum yolo-Repo (für rig_kinematics-Import,
+                        siehe pose_priors.py). Ohne diese Variable werden
+                        RealityScan-Pose-Priors übersprungen (Warnung im Log),
+                        der restliche Ablauf läuft unverändert weiter.
+    NEPTUN_RIG          'testmodell' oder 'pilotmodell' (Standard: testmodell)
 
 Starten (aus ~/Depth-Anything-3):
     python watcher.py
@@ -55,6 +60,15 @@ except ImportError:
     pass
 
 from supabase import create_client
+
+try:
+    from pose_priors import RIGS_BY_NAME, write_pose_priors
+except ImportError:
+    # NEPTUN_CALIBRATION_PATH nicht gesetzt oder yolo-Repo nicht erreichbar –
+    # Pose-Priors werden übersprungen, RealityScan-Alignment läuft trotzdem
+    # (nur ohne Startwert für die Bündelausgleichung).
+    RIGS_BY_NAME = {}
+    write_pose_priors = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -381,6 +395,7 @@ def process_scan(
     da3_cmd: str,
     model_dir: str,
     realityscan_exe: str,
+    rig_name: str = "testmodell",
 ) -> None:
     """Kompletter Verarbeitungs-Workflow: DA3 (Pfad A) dann RealityScan (Pfad B)."""
     logger.info("=== Scan-Verarbeitung startet ===")
@@ -423,6 +438,16 @@ def process_scan(
 
     # ── PFAD B: RealityScan (langsam, alle 27 Frames) ───────────────────
     logger.info("--- PFAD B: RealityScan ---")
+    if write_pose_priors is not None and rig_name in RIGS_BY_NAME:
+        try:
+            write_pose_priors(workspace, metadata, RIGS_BY_NAME[rig_name])
+        except Exception as exc:
+            logger.warning(f"Pose-Priors konnten nicht geschrieben werden: {exc}")
+    else:
+        logger.warning(
+            "Pose-Priors übersprungen (NEPTUN_CALIBRATION_PATH nicht gesetzt "
+            "oder rig_kinematics nicht importierbar) – Alignment läuft ohne Startwert."
+        )
     if _run_realityscan(workspace, viewer, realityscan_exe):
         _compress_draco(viewer)
         if _upload_mesh_glb(sb, device_id, viewer):
@@ -447,11 +472,16 @@ def main() -> None:
         "REALITYSCAN_EXE",
         "/mnt/c/Program Files/Epic Games/RealityScan_2.1/RealityScan.exe",
     )
+    rig_name        = os.environ.get("NEPTUN_RIG", "testmodell")
 
     sb = create_client(supabase_url, supabase_key)
     logger.info(f"BirdGuard Watcher gestartet – Device {device_id}")
     logger.info(f"RealityScan: {realityscan_exe}")
     logger.info(f"Draco-Komprimierung: {_GLTF_TRANSFORM_CMD}")
+    if write_pose_priors is not None:
+        logger.info(f"Rig-Kinematik: aktiv (Rig={rig_name})")
+    else:
+        logger.info("Rig-Kinematik: inaktiv (NEPTUN_CALIBRATION_PATH nicht gesetzt)")
     logger.info(f"Polling alle {POLL_INTERVAL_S:.0f}s …")
 
     last_status: str | None = None
@@ -478,7 +508,7 @@ def main() -> None:
             if status == "processing":
                 process_scan(
                     sb, device_id, workspace, viewer,
-                    da3_cmd, model_dir, realityscan_exe,
+                    da3_cmd, model_dir, realityscan_exe, rig_name,
                 )
                 last_status = None
 
