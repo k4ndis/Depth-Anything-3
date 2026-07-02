@@ -62,13 +62,13 @@ except ImportError:
 from supabase import create_client
 
 try:
-    from pose_priors import RIGS_BY_NAME, write_pose_priors
+    from pose_priors import RIGS_BY_NAME, write_flight_log
 except ImportError:
     # NEPTUN_CALIBRATION_PATH nicht gesetzt oder yolo-Repo nicht erreichbar –
     # Pose-Priors werden übersprungen, RealityScan-Alignment läuft trotzdem
     # (nur ohne Startwert für die Bündelausgleichung).
     RIGS_BY_NAME = {}
-    write_pose_priors = None
+    write_flight_log = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -202,7 +202,12 @@ def _to_win_path(path: Path) -> str:
     return "\\\\wsl.localhost\\Ubuntu" + p.replace("/", "\\")
 
 
-def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> bool:
+def _run_realityscan(
+    workspace: Path,
+    viewer: Path,
+    realityscan_exe: str,
+    pose_prior_csv: Path | None = None,
+) -> bool:
     """
     Fuehrt RealityScan 2.x (RealityCapture-Engine) auf allen 27 Frames aus.
     Ausgabe: viewer/scene_mesh.glb (texturiertes Mesh)
@@ -215,6 +220,11 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     Hinweis: RealityCapture beendet sich häufig mit Exit-Code != 0, auch wenn
     der Export erfolgreich war. Der Exit-Code wird daher ignoriert; stattdessen
     wird geprüft ob scene_mesh.glb tatsächlich existiert und Inhalt hat.
+
+    pose_prior_csv: von pose_priors.write_flight_log() erzeugte Flight-Log-CSV
+    (siehe dort) – wird per -importFlightLog nach -addFolder eingespeist, damit
+    die Bündelausgleichung mit dem aus rig_kinematics berechneten Startwert
+    beginnt statt rein bildbasiert von Null zu starten.
     """
     viewer.mkdir(parents=True, exist_ok=True)
     output_glb = viewer / "scene_mesh.glb"
@@ -225,6 +235,10 @@ def _run_realityscan(workspace: Path, viewer: Path, realityscan_exe: str) -> boo
     cmd = [
         realityscan_exe,
         "-addFolder",                  win_input,
+    ]
+    if pose_prior_csv is not None:
+        cmd += ["-importFlightLog", _to_win_path(pose_prior_csv)]
+    cmd += [
         "-align",
         "-selectMaximalComponent",
         "-setReconstructionRegionAuto",
@@ -438,9 +452,10 @@ def process_scan(
 
     # ── PFAD B: RealityScan (langsam, alle 27 Frames) ───────────────────
     logger.info("--- PFAD B: RealityScan ---")
-    if write_pose_priors is not None and rig_name in RIGS_BY_NAME:
+    pose_prior_csv = None
+    if write_flight_log is not None and rig_name in RIGS_BY_NAME:
         try:
-            write_pose_priors(workspace, metadata, RIGS_BY_NAME[rig_name])
+            pose_prior_csv = write_flight_log(workspace, metadata, RIGS_BY_NAME[rig_name])
         except Exception as exc:
             logger.warning(f"Pose-Priors konnten nicht geschrieben werden: {exc}")
     else:
@@ -448,7 +463,7 @@ def process_scan(
             "Pose-Priors übersprungen (NEPTUN_CALIBRATION_PATH nicht gesetzt "
             "oder rig_kinematics nicht importierbar) – Alignment läuft ohne Startwert."
         )
-    if _run_realityscan(workspace, viewer, realityscan_exe):
+    if _run_realityscan(workspace, viewer, realityscan_exe, pose_prior_csv):
         _compress_draco(viewer)
         if _upload_mesh_glb(sb, device_id, viewer):
             _set_mesh_status(sb, device_id, "complete")
@@ -478,7 +493,7 @@ def main() -> None:
     logger.info(f"BirdGuard Watcher gestartet – Device {device_id}")
     logger.info(f"RealityScan: {realityscan_exe}")
     logger.info(f"Draco-Komprimierung: {_GLTF_TRANSFORM_CMD}")
-    if write_pose_priors is not None:
+    if write_flight_log is not None:
         logger.info(f"Rig-Kinematik: aktiv (Rig={rig_name})")
     else:
         logger.info("Rig-Kinematik: inaktiv (NEPTUN_CALIBRATION_PATH nicht gesetzt)")

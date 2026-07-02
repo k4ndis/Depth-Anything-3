@@ -4,43 +4,57 @@ pose_priors.py – RealityScan-Pose-Priors aus der NEPTUN-Rig-Kinematik
 ========================================================================
 Berechnet für jeden Scan-Frame (pan_deg/tilt_deg aus scan_metadata.json) über
 rig_kinematics.forward() die erwartete Kamerapose und schreibt sie als
-XMP-Sidecar neben das jeweilige Bild. RealityScan liest solche Sidecars beim
-Import (-addFolder) automatisch als Pose-Prior für die Bündelausgleichung.
+"Flight Log"-CSV (RealityScans dokumentiertes Trajektorie-Importformat,
+siehe https://dev.epicgames.com/documentation/realityscan/all-commands,
+Befehl `-importFlightLog`, Default-Spalten laut Doku:
 
-Zwei Prior-Arten:
+    Image, X, Y, Altitude, XAccuracy, YAccuracy, AltitudeAccuracy, Yaw, Pitch, Roll
 
-  Absolut, pro Aufnahme ("Position and orientation", inpPose=2):
-      Servo-Encoder haben Spiel/Ungenauigkeit – die Bündelausgleichung soll
-      um den berechneten Startwert herum verfeinern dürfen, NICHT "Locked"
-      (inpPose=3). Schon heute mit dem Testmodell (1 Kamera, echte Fotos)
-      testbar.
+Y ist dabei die Höhenachse ("Yaw – Rotation um Y-Achse"), X die zweite
+horizontale Achse ("Pitch – Rotation um X-Achse"), Z ergibt sich daraus
+rechtshändig ("Roll – Rotation um Z-Achse"). Omega/Phi/Kappa (die im GUI unter
+"Prior pose" zusätzlich angezeigt werden) gelten laut Doku nur für
+georeferenzierte Szenen – unser Projekt ist "local … Euclidean", also NICHT
+georeferenziert, deshalb Yaw/Pitch/Roll statt Omega/Phi/Kappa.
 
-  Relativ, für ein Stereo-Paar ("Exact", inpPosePriorRelative=2, gemeinsame
-      inpPosePriorRelativeGroup): Baseline ist mechanisch starr und exakt
-      bekannt. Nur relevant für RIG_PILOTMODELL (2 Kameras) – Code ist
-      fertig, aber erst testbar sobald das Pilotmodell physisch da ist.
+Das deckt sich exakt mit rig_kinematics.py's Orientation: yaw_deg ist bereits
+eine Rotation um die Pan-Achse (=Y), pitch_deg um die Tilt-Achse (=lokales X)
+– keine Rotationsmatrix, keine Basiswechsel-Umrechnung nötig, nur direkte
+Übernahme der beiden Werte. Roll ist beim Rig konstruktionsbedingt immer 0
+(kein dritter Rotations-Freiheitsgrad).
 
-WICHTIG – unverifizierte Annahme: Die Rotationsmatrix wird im Rig-
-Referenzsystem ausgegeben, wie in rig_kinematics.py definiert (Y-up, +Z
-= vorne bei Pan/Tilt=Home, +X = rechts). Ob RealityScans eigenes lokales
-Koordinatensystem beim Import dieselbe Konvention erwartet (z. B. Y-up vs.
-Z-up), ist NICHT verifiziert (siehe Handoff Abschnitt 4, "RealityScan-
-Export-Settings prüfen") – beim ersten echten Alignment-Test gegenprüfen,
-ggf. eine Basiswechsel-Matrix ergänzen.
+Frühere Version schrieb XMP-Sidecars – verworfen, weil `-addFolder` diese
+beim Import NICHT automatisch liest (bestätigt: "Absolute pose" blieb
+"Unknown" trotz vorhandener .xmp-Dateien neben den Bildern). `-importFlightLog`
+ist der dokumentierte, für diesen Zweck vorgesehene Mechanismus.
+
+Absoluter Pose-Prior pro Aufnahme, verfeinerbar (nicht "Locked" – Servo-
+Encoder haben Spiel/Ungenauigkeit, die Bündelausgleichung soll um den
+berechneten Startwert herum verfeinern dürfen): über die Accuracy-Spalten
+gesteuert (siehe POSITION_ACCURACY_M / ORIENTATION_ACCURACY_DEG unten),
+nicht über einen diskreten Modus wie in der GUI.
+
+Stereo-Paare (RIG_PILOTMODELL, relative Pose zwischen linker/rechter Kamera):
+das Flight-Log-Format kennt keine Gruppierung für starre Rig-Baselines. Dafür
+braucht es vermutlich `-editInputSelection` mit eigenen Relative-Pose-Keys –
+noch nicht recherchiert, weil erst mit der Pilotmodell-Hardware überhaupt
+testbar. TODO sobald das Pilotmodell da ist.
 
 rig_kinematics.py existiert nur im yolo-Repo (eine Quelle der Wahrheit).
 Import über NEPTUN_CALIBRATION_PATH (.env), siehe unten.
 
 Verwendung (Bibliothek, aufgerufen aus watcher.py):
-    from pose_priors import write_pose_priors
+    from pose_priors import write_flight_log
 
-    write_pose_priors(workspace_dir, metadata, config=RIG_TESTMODELL)
+    csv_path = write_flight_log(workspace_dir, metadata, config=RIG_TESTMODELL)
+    # anschließend per CLI: -importFlightLog <csv_path>
 
 Standalone (z. B. zum manuellen Nachrechnen eines vorhandenen Scans):
     python pose_priors.py <scan_dir_mit_scan_metadata.json> [--rig testmodell|pilotmodell]
 """
 
 import argparse
+import csv
 import json
 import logging
 import os
@@ -62,8 +76,6 @@ if _calibration_path and _calibration_path not in sys.path:
 from neptun.calibration.rig_kinematics import (  # noqa: E402
     RIG_PILOTMODELL,
     RIG_TESTMODELL,
-    Orientation,
-    Position,
     RigConfig,
     forward,
 )
@@ -80,136 +92,73 @@ RIGS_BY_NAME: dict[str, RigConfig] = {
     "pilotmodell": RIG_PILOTMODELL,
 }
 
-# RealityScan-Pose-Prior-Modi (siehe Handoff, Abschnitt 2).
-INP_POSE_POSITION_AND_ORIENTATION = 2   # verfeinerbarer Startwert (Servo-Ungenauigkeit)
-INP_POSE_LOCKED = 3                     # fix, keine Verfeinerung (hier NICHT verwendet)
-INP_POSE_PRIOR_RELATIVE_EXACT = 2       # Stereo-Baseline, mechanisch starr
+# Locker genug, damit die Bündelausgleichung frei verfeinern kann (Servo-
+# Encoder-Ungenauigkeit + axis_offset-Modellfehler), aber eng genug um bei
+# schwacher Bildüberlappung als Startwert zu helfen. Unkalibriert – bei
+# Bedarf nach echten Tests nachjustieren.
+POSITION_ACCURACY_M = 0.05
+ORIENTATION_ACCURACY_DEG = 5.0
+
+_FLIGHT_LOG_COLUMNS = (
+    "Image", "X", "Y", "Altitude",
+    "XAccuracy", "YAccuracy", "AltitudeAccuracy",
+    "Yaw", "Pitch", "Roll",
+)
 
 
-def _rotation_matrix_row_major(orientation: Orientation) -> tuple[float, ...]:
-    """3x3-Rotationsmatrix (Kamera→Rig-Welt, row-major, roll=0) aus yaw/pitch.
-
-    Spalten = Kamera-Achsen (rechts, oben, vorne) im Rig-Referenzsystem –
-    siehe rig_kinematics.py Modul-Docstring für die Achsenkonvention.
-    """
-    from math import cos, radians, sin
-
-    theta = radians(orientation.yaw_deg)
-    phi = radians(orientation.pitch_deg)
-
-    right_world = (cos(theta), 0.0, -sin(theta))
-    up_world = (-sin(phi) * sin(theta), cos(phi), -sin(phi) * cos(theta))
-    forward_world = (sin(theta) * cos(phi), sin(phi), cos(theta) * cos(phi))
-
-    r00, r10, r20 = right_world
-    r01, r11, r21 = up_world
-    r02, r12, r22 = forward_world
-    return (r00, r01, r02, r10, r11, r12, r20, r21, r22)
-
-
-_XMP_TEMPLATE = """<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/">
-  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-    <rdf:Description rdf:about=""
-        xmlns:xcr="http://www.capturingreality.com/ns/xcr/1.1#"
-        xcr:Version="3"
-        xcr:Coordinates="local"
-        xcr:inpPose="{inp_pose}"{relative_attrs}>
-      <xcr:Rotation>{rotation}</xcr:Rotation>
-      <xcr:Position>{position}</xcr:Position>
-    </rdf:Description>
-  </rdf:RDF>
-</x:xmpmeta>
-<?xpacket end="w"?>
-"""
-
-
-def write_pose_prior_xmp(
-    image_path: Path,
-    position: Position,
-    orientation: Orientation,
-    *,
-    inp_pose: int = INP_POSE_POSITION_AND_ORIENTATION,
-    relative_group: str | None = None,
-    relative_prior: int | None = None,
-) -> Path:
-    """Schreibt ein XMP-Sidecar (<image>.xmp) mit Pose-Prior für RealityScan."""
-    rot = _rotation_matrix_row_major(orientation)
-    relative_attrs = ""
-    if relative_group is not None:
-        prior = INP_POSE_PRIOR_RELATIVE_EXACT if relative_prior is None else relative_prior
-        relative_attrs = (
-            f'\n        xcr:inpPosePriorRelative="{prior}"'
-            f'\n        xcr:inpPosePriorRelativeGroup="{relative_group}"'
-        )
-
-    xmp = _XMP_TEMPLATE.format(
-        inp_pose=inp_pose,
-        relative_attrs=relative_attrs,
-        rotation=" ".join(f"{v:.9f}" for v in rot),
-        position=f"{position.x:.6f} {position.y:.6f} {position.z:.6f}",
-    )
-
-    xmp_path = image_path.with_suffix(image_path.suffix + ".xmp")
-    xmp_path.write_text(xmp, encoding="utf-8")
-    return xmp_path
-
-
-def write_pose_priors(
+def write_flight_log(
     workspace: Path,
     metadata: dict,
     config: RigConfig,
-) -> list[Path]:
-    """Schreibt Pose-Prior-XMPs für alle Frames aus scan_metadata.json.
+    csv_filename: str = "pose_priors.csv",
+) -> Path | None:
+    """Schreibt eine RealityScan-Flight-Log-CSV für alle Single-Kamera-Frames.
 
-    Frames ohne 'camera'-Feld gelten als Single-Kamera-Rig (RIG_TESTMODELL).
-    Frames mit 'camera': 'left'/'right' (künftiges RIG_PILOTMODELL-Format,
-    siehe scan3d.py-Erweiterung) werden zusätzlich als relative Stereo-Priors
-    ("Exact") mit gemeinsamer Gruppe pro Scan-Position markiert.
+    Frames mit 'camera': 'left'/'right' (künftiges Stereo-Format, siehe
+    scan3d.py-Erweiterung) werden übersprungen – siehe Modul-Docstring.
+    Gibt None zurück (statt eines Pfads), wenn keine Zeile geschrieben wurde.
     """
-    written: list[Path] = []
-    stereo_groups: dict[tuple[float, float], list[dict]] = {}
+    rows = []
+    skipped_stereo = 0
 
     for frame in metadata["frames"]:
         camera = frame.get("camera", "single")
-        pan_deg, tilt_deg = frame["pan_deg"], frame["tilt_deg"]
-        pos, orient = forward(pan_deg, tilt_deg, config, camera=camera)
+        if camera != "single":
+            skipped_stereo += 1
+            continue
 
+        pan_deg, tilt_deg = frame["pan_deg"], frame["tilt_deg"]
         image_path = workspace / frame["filename"]
         if not image_path.exists():
             logger.warning(f"Bild fehlt, Pose-Prior übersprungen: {image_path}")
             continue
 
-        if camera == "single":
-            xmp_path = write_pose_prior_xmp(image_path, pos, orient)
-            written.append(xmp_path)
-            logger.info(f"  ✓ {xmp_path.name}  (pan={pan_deg}° tilt={tilt_deg}°)")
-        else:
-            stereo_groups.setdefault((pan_deg, tilt_deg), []).append(
-                {"frame": frame, "camera": camera, "pos": pos, "orient": orient}
-            )
+        pos, orient = forward(pan_deg, tilt_deg, config, camera=camera)
+        rows.append([
+            frame["filename"],
+            f"{pos.x:.6f}", f"{pos.y:.6f}", f"{pos.z:.6f}",
+            f"{POSITION_ACCURACY_M}", f"{POSITION_ACCURACY_M}", f"{POSITION_ACCURACY_M}",
+            f"{orient.yaw_deg:.6f}", f"{orient.pitch_deg:.6f}", "0.0",
+        ])
 
-    for group_idx, ((pan_deg, tilt_deg), entries) in enumerate(sorted(stereo_groups.items())):
-        group_name = f"stereo_pos_{group_idx:02d}"
-        for entry in entries:
-            image_path = workspace / entry["frame"]["filename"]
-            if not image_path.exists():
-                logger.warning(f"Bild fehlt, Pose-Prior übersprungen: {image_path}")
-                continue
-            xmp_path = write_pose_prior_xmp(
-                image_path,
-                entry["pos"],
-                entry["orient"],
-                relative_group=group_name,
-            )
-            written.append(xmp_path)
-            logger.info(
-                f"  ✓ {xmp_path.name}  ({entry['camera']}, Gruppe={group_name}, "
-                f"pan={pan_deg}° tilt={tilt_deg}°)"
-            )
+    if skipped_stereo:
+        logger.warning(
+            f"{skipped_stereo} Stereo-Frame(s) übersprungen "
+            "(relative Pose-Priors für RIG_PILOTMODELL noch nicht implementiert)"
+        )
 
-    logger.info(f"Pose-Priors geschrieben: {len(written)} XMP-Sidecar(s) in {workspace}")
-    return written
+    if not rows:
+        logger.warning("Keine Pose-Priors zu schreiben (keine Single-Kamera-Frames gefunden)")
+        return None
+
+    csv_path = workspace / csv_filename
+    with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(f"# {c}" if i == 0 else c for i, c in enumerate(_FLIGHT_LOG_COLUMNS))
+        writer.writerows(rows)
+
+    logger.info(f"Pose-Priors geschrieben: {len(rows)} Zeile(n) in {csv_path}")
+    return csv_path
 
 
 def _parse_args():
@@ -228,7 +177,7 @@ def main():
 
     metadata = json.loads(meta_path.read_text(encoding="utf-8"))
     config = RIGS_BY_NAME[args.rig]
-    write_pose_priors(args.scan_dir, metadata, config)
+    write_flight_log(args.scan_dir, metadata, config)
 
 
 if __name__ == "__main__":
