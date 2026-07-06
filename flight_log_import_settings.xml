@@ -1,0 +1,20 @@
+<Configuration id="{93DBD041-AE1C-4631-89BC-D9430FCED843}">
+  <entry key="ifuRotP" value="2.0"/>
+  <entry key="ifuuInhEn" value="true"/>
+  <entry key="ifuRotY" value="2.0"/>
+  <entry key="ifTmode" value="0x0"/>
+  <entry key="ifCSopt" value="1"/>
+  <entry key="ifuRotR" value="2.0"/>
+  <entry key="ifRmode" value="0x1"/>
+  <entry key="ifDistortionmode" value="0x0"/>
+  <entry key="gpsLogFileFormat" value="{97F08A22-F231-4AB4-A2FD-6FA42BB6D663}"/>
+  <entry key="CoordinateSystemFlightLog" value="+proj=geocent +ellps=WGS84 +no_defs"/>
+  <entry key="CoordinateSystemFlightLogType" value="local:1 - Euclidean"/>
+  <entry key="ifKGrp" value="2"/>
+  <entry key="ifuRotEnable" value="true"/>
+  <entry key="gpsLogEulerAnglesOrderYPR" value="5"/>
+  <entry key="csvFLIgn" value="true"/>
+  <entry key="ifuuInh" value="1"/>
+  <entry key="gpsLogMount" value="3"/>
+  <entry key="csvFLSep" value="0"/>
+</Configuration>

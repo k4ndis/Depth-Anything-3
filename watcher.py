@@ -225,6 +225,11 @@ def _run_realityscan(
     (siehe dort) – wird per -importFlightLog nach -addFolder eingespeist, damit
     die Bündelausgleichung mit dem aus rig_kinematics berechneten Startwert
     beginnt statt rein bildbasiert von Null zu starten.
+
+    -importFlightLog <csv> allein schlägt per CLI fehl (err:7159) – RealityScan
+    braucht dafür eine passende params.xml (aus dem "Import Trajectory"-Dialog
+    exportiert), sonst rät es das Spaltenformat nicht richtig.
+    Siehe flight_log_import_settings.xml (im Repo-Root, neben watcher.py).
     """
     viewer.mkdir(parents=True, exist_ok=True)
     output_glb = viewer / "scene_mesh.glb"
@@ -237,7 +242,8 @@ def _run_realityscan(
         "-addFolder",                  win_input,
     ]
     if pose_prior_csv is not None:
-        cmd += ["-importFlightLog", _to_win_path(pose_prior_csv)]
+        import_settings = Path(__file__).parent / "flight_log_import_settings.xml"
+        cmd += ["-importFlightLog", _to_win_path(pose_prior_csv), _to_win_path(import_settings)]
     cmd += [
         "-align",
         "-selectMaximalComponent",
