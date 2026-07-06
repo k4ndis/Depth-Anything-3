@@ -39,9 +39,6 @@ Konfiguration über .env (oder Umgebungsvariablen):
                         RealityScan-Pose-Priors übersprungen (Warnung im Log),
                         der restliche Ablauf läuft unverändert weiter.
     NEPTUN_RIG          'testmodell' oder 'pilotmodell' (Standard: testmodell)
-    REALITYSCAN_KEEP_OPEN  '1' = kein -quit, RealityScan bleibt nach dem
-                        Alignment offen (Debug, z. B. Pose-Priors manuell im
-                        "Prior pose"-Panel prüfen). Standard: aus.
 
 Starten (aus ~/Depth-Anything-3):
     python watcher.py
@@ -90,11 +87,6 @@ _GLTF_TRANSFORM_CMD = os.environ.get("GLTF_TRANSFORM_CMD", "gltf-transform")
 
 # Supabase Free-Plan: 50 MB pro Datei (nicht konfigurierbar ohne Pro-Upgrade)
 _SUPABASE_MAX_MB = 50.0
-
-# Debug: RealityScan nach dem Alignment offen lassen (kein -quit), um Pose-Priors
-# manuell im "Prior pose"-Panel zu prüfen. Für den Normalbetrieb aus lassen –
-# subprocess.run() blockiert sonst bis RealityScan manuell geschlossen wird.
-_REALITYSCAN_KEEP_OPEN = os.environ.get("REALITYSCAN_KEEP_OPEN", "0") == "1"
 
 
 def _require_env(key: str) -> str:
@@ -254,15 +246,10 @@ def _run_realityscan(
         "-calculateTexture",
         "-renameSelectedModel",        "scene_mesh",
         "-exportModel",                "scene_mesh",  win_output,
+        # "-quit",  # auskommentiert: Fenster bleibt offen, um Pose-Priors im
+        # "Prior pose"-Panel zu prüfen. subprocess.run() blockiert deshalb, bis
+        # RealityScan manuell geschlossen wird (oder nach 60 min Timeout).
     ]
-    if _REALITYSCAN_KEEP_OPEN:
-        logger.info(
-            "REALITYSCAN_KEEP_OPEN gesetzt – kein -quit, Fenster bleibt zur Prüfung "
-            "offen. subprocess.run() blockiert, bis RealityScan manuell geschlossen "
-            "wird (oder nach 60 min Timeout)."
-        )
-    else:
-        cmd += ["-quit"]
     logger.info(f"RealityScan-Befehl: {' '.join(cmd)}")
     try:
         result = subprocess.run(cmd, timeout=3600)
