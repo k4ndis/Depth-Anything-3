@@ -17,6 +17,14 @@
 
 </div>
 
+> **This is the NEPTUN fork.** It is kept for exactly one thing: the `da3` CLI
+> and model that turn a handful of scan frames into a `scene.glb`. The
+> Supabase watcher that used to live here (`watcher.py`) is gone — polling,
+> downloading, registration and upload are `neptun/stereo/watch_pc.py` in the
+> [k4ndis/yolo](https://github.com/k4ndis/yolo) repo now. What that means for
+> anyone running a scan is in **[NEPTUN.md](NEPTUN.md)**; everything below is
+> the upstream documentation.
+
 This work presents **Depth Anything 3 (DA3)**, a model that predicts spatially consistent geometry from
 arbitrary visual inputs, with or without known camera poses.
 In pursuit of minimal modeling, DA3 yields two key insights:
