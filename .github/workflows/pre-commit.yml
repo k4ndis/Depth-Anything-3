@@ -1,0 +1,45 @@
+# Die Hooks aus .pre-commit-config.yaml laufen jetzt auch, wenn niemand
+# `pre-commit install` ausgefuehrt hat.
+#
+# Bewusst NICHT --all-files: das hier ist ein Fork, und der Upstream-Stand ist
+# nicht sauber (Stand Session 13: 149 flake8-Funde, 26 Dateien, die black
+# umformatieren wuerde). Ein Job, der ab dem ersten Tag rot ist und rot bleibt,
+# wird nach einer Woche ignoriert - dann kann man ihn auch weglassen.
+#
+# Geprueft wird deshalb nur, was dieser Branch gegenueber dem Basis-Branch
+# tatsaechlich anfasst. Der geerbte Zustand bleibt in Ruhe, unsere eigenen
+# Aenderungen halten sich an black, isort und flake8. Wer den Fork spaeter
+# komplett formatieren will, macht das in einem eigenen Commit und stellt
+# danach hier auf --all-files um.
+name: pre-commit
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    env:
+      BASE: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Volle Historie: ohne sie gibt es keinen gemeinsamen Vorfahren, gegen
+          # den sich "geaendert" ueberhaupt bestimmen liesse.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install pre-commit
+
+      - name: Hooks auf den geaenderten Dateien
+        run: |
+          git fetch --no-tags origin "$BASE"
+          pre-commit run \
+            --from-ref "origin/$BASE" \
+            --to-ref HEAD \
+            --show-diff-on-failure

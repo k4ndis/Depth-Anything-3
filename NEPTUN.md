@@ -41,3 +41,24 @@ and would hang an unattended watcher) and `--no-show-cameras` (otherwise the
 camera wireframes land in the `.glb` and drag the ICP off).
 
 See `docs/STEREO_PIPELINE.md` in the `yolo` repo for the whole picture.
+
+## Formatierung
+
+`.pre-commit-config.yaml` kommt aus dem Upstream und lief bisher nur bei dem,
+der `pre-commit install` ausgefuehrt hatte. `.github/workflows/pre-commit.yml`
+fuehrt die Hooks jetzt bei jedem Push aus - allerdings nur auf den Dateien, die
+dieser Branch gegenueber `main` aendert. Der geerbte Upstream-Stand ist nicht
+formatiert, und ein dauerhaft roter Job prueft am Ende gar nichts mehr.
+
+Lokal derselbe Lauf:
+
+```bash
+pip install pre-commit
+pre-commit run --from-ref origin/main --to-ref HEAD
+```
+
+Nebenwirkung, die man einmal kennen sollte: wer eine Datei anfasst, die vom
+Upstream Leerzeichen am Zeilenende mitbringt (`README.md` zum Beispiel), bekommt
+von `trim trailing whitespace` die ganze Datei mitkorrigiert. Das ist richtig so,
+sieht im Diff aber nach mehr aus, als man geaendert hat - am besten in einen
+eigenen Commit legen.
