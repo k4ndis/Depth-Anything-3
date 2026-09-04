@@ -46,6 +46,14 @@ pre-commit run --all-files     # Formatierung und Linter, das prüft auch die CI
 
 ## Arbeitsweise
 
+- Der Code ist die Wahrheit, nicht die Doku. Doku kann alt sein. Wenn beides
+  sich widerspricht, gilt der Code — und sag mir, dass die Doku nicht mehr
+  stimmt.
+- Wenn ich einen Weg vorschlage, prüf, ob es einen einfacheren gibt. Wenn ja,
+  sag ihn mir in zwei Sätzen mit dem Grund. Entscheiden tue ich. Bau nicht
+  ungefragt etwas anderes, als ich gesagt habe.
+- Wenn ich mich irre, sag es direkt. Lieber ein Widerspruch vorher als eine
+  kaputte Änderung hinterher.
 - So wenig wie möglich am Original ändern. Je kleiner unser Unterschied zum
   Original ist, desto einfacher ist das nächste Update von dort.
 - Was wir selbst dazubauen, gehört nach Möglichkeit in eigene Dateien.
