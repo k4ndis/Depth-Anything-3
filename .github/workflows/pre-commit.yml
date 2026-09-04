@@ -1,29 +1,29 @@
-# Die Hooks aus .pre-commit-config.yaml laufen jetzt auch, wenn niemand
-# `pre-commit install` ausgefuehrt hat.
+# The hooks from .pre-commit-config.yaml now run even when nobody has run
+# `pre-commit install`.
 #
-# Bewusst NICHT --all-files: das hier ist ein Fork, und der Upstream-Stand ist
-# nicht sauber (Stand Session 13: 149 flake8-Funde, 26 Dateien, die black
-# umformatieren wuerde). Ein Job, der ab dem ersten Tag rot ist und rot bleibt,
-# wird nach einer Woche ignoriert - dann kann man ihn auch weglassen.
+# Deliberately NOT --all-files: this is a fork, and the upstream state is not
+# clean (as of session 13: 149 flake8 findings, 26 files black would
+# reformat). A job that is red from day one and stays red gets ignored after a
+# week - at which point it may as well not exist.
 #
-# Geprueft wird deshalb nur, was dieser Branch gegenueber dem Basis-Branch
-# tatsaechlich anfasst. Der geerbte Zustand bleibt in Ruhe, unsere eigenen
-# Aenderungen halten sich an black, isort und flake8. Wer den Fork spaeter
-# komplett formatieren will, macht das in einem eigenen Commit und stellt
-# danach hier auf --all-files um.
+# So what gets checked is only what this branch actually touches relative to
+# the base branch. The inherited state is left alone, while our own changes
+# keep to black, isort and flake8. Whoever wants to format the whole fork
+# later does that in a commit of its own and then switches this over to
+# --all-files.
 name: pre-commit
 
-# Nur beim Pull Request, und hier anders als in den beiden anderen Repos auch
-# NICHT zusaetzlich beim Push auf main.
+# Pull requests only, and here - unlike in the other two repos - NOT
+# additionally on a push to main.
 #
-# Der Grund steckt in dem, was dieser Job prueft: die Dateien, die ein Branch
-# gegenueber dem Basis-Branch aendert. Auf main gegen main sind das keine - der
-# Lauf waere immer gruen, ohne irgendetwas angesehen zu haben. Ein Haken, der
-# nichts bedeutet, ist schlimmer als keiner: er sieht aus wie eine Zusage.
+# The reason lies in what this job checks: the files a branch changes relative
+# to the base branch. On main against main there are none - the run would
+# always be green without having looked at anything. A checkmark that means
+# nothing is worse than no checkmark: it looks like a promise.
 #
-# Ein Push auf einen Branch ohne PR loest damit nichts aus. Wer vorher gruen
-# sehen will, macht den PR als Entwurf auf - oder laesst die Hooks lokal
-# laufen, wofuer sie ja gedacht sind: `pre-commit install`.
+# A push to a branch without a PR therefore triggers nothing. Anyone who wants
+# to see green before that opens the PR as a draft - or runs the hooks
+# locally, which is what they are for: `pre-commit install`.
 on:
   pull_request:
 
@@ -35,8 +35,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Volle Historie: ohne sie gibt es keinen gemeinsamen Vorfahren, gegen
-          # den sich "geaendert" ueberhaupt bestimmen liesse.
+          # Full history: without it there is no common ancestor against which
+          # "changed" could be determined at all.
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -46,7 +46,7 @@ jobs:
 
       - run: pip install pre-commit
 
-      - name: Hooks auf den geaenderten Dateien
+      - name: Run hooks on the changed files
         run: |
           git fetch --no-tags origin "$BASE"
           pre-commit run \
