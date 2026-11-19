@@ -41,8 +41,12 @@ Details in `NEPTUN.md`. Der Code liegt in `src/`.
 
 ```bash
 pip install -r requirements.txt
-pre-commit run --all-files     # Formatierung und Linter, das prüft auch die CI
+pre-commit run --from-ref origin/main --to-ref HEAD   # wie die CI: nur geänderte Dateien
 ```
+
+Nicht `--all-files`: Der Stand aus dem Original ist nicht formatiert. Die CI
+prüft deshalb nur, was ein Branch gegenüber `main` ändert. Mehr dazu in
+`NEPTUN.md` unter „Formatierung“.
 
 ## Arbeitsweise
 
