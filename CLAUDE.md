@@ -58,3 +58,22 @@ pre-commit run --all-files     # Formatierung und Linter, das prüft auch die CI
   Original ist, desto einfacher ist das nächste Update von dort.
 - Was wir selbst dazubauen, gehört nach Möglichkeit in eigene Dateien.
 - Kleine Änderungen. Eine Sache pro Commit.
+
+## Pull Requests
+
+- Titel und Text auf Englisch. Der Titel nennt alles, was im PR steckt,
+  nicht nur den ersten Commit.
+- Der Text hat immer denselben Aufbau:
+  1. Ein, zwei Sätze vorweg: was sich ändert und warum.
+  2. Pro Thema ein Abschnitt `## …` mit Stichpunkten.
+  3. `## Docs`: welche Doku geändert wurde.
+  4. `## Tests`: welche Befehle liefen, mit Ergebnis in Zahlen. Und was noch
+     nicht in echt geprüft ist, auf dem Rig oder im laufenden Dashboard.
+  5. Wenn nötig `## Deployment order`: Migrationen und die Reihenfolge von
+     Pi, PC-Watcher und Dashboard.
+  6. Am Ende die Zeile `🤖 Generated with [Claude Code](https://claude.com/claude-code)`
+     und darunter der Link zur Claude-Session.
+- Ein PR im anderen Repo wird als `k4ndis/<repo>#<Nummer>` genannt.
+- Wird ein PR über den Knopf in der Oberfläche angelegt, passt Claude den Text
+  danach an diesen Aufbau an.
+- Label und Assignee setze ich selbst, wenn ich den PR geprüft habe.
